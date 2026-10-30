@@ -21,6 +21,7 @@ to one shared account:
 | While offline | The child was **not** in the database; their 7 answers waited on the Chromebook |
 | Back online | **5 s later** the database held the child: completed, 2/7, 7 answers |
 | Child home, number game, reading game, storybook with narration | All opened and played with the network off |
+| Who's playing?, served from the Railway service (no tunnel) | Online: Class 3 › A › a child from the class list; the quiz started as that child without asking. Offline: Class 2 › B › "I'm not on the list" › Add me › the whole quiz. While offline the child was on neither the server's added list nor in the database; after reconnecting, both, with the quiz completed (2/7, 7 answers) |
 
 "Network off" means the server dropped every connection **and** the Chromebook's browser was offline
 (`navigator.onLine === false`), so nothing could come from the internet.
