@@ -125,17 +125,21 @@ function bodyKey(req) {
 var LOCAL = 'cblocal.';
 function db() {
   return new Promise(function (ok, no) {
-    var r = indexedDB.open('cb-outbox', 1);
-    r.onupgradeneeded = function () { r.result.createObjectStore('s', { keyPath: 'lsid' }); };
+    var r = indexedDB.open('cb-outbox', 2);
+    r.onupgradeneeded = function () {
+      if (!r.result.objectStoreNames.contains('s')) r.result.createObjectStore('s', { keyPath: 'lsid' });
+      // 'q': who played (/__cb/identity, /__cb/added) recorded with no network, sent by sync().
+      if (!r.result.objectStoreNames.contains('q')) r.result.createObjectStore('q', { keyPath: 'id', autoIncrement: true });
+    };
     r.onsuccess = function () { ok(r.result); };
     r.onerror = function () { no(r.error); };
   });
 }
-function rec(mode, fn) {
+function rec(mode, fn, store) {
   return db().then(function (d) {
     return new Promise(function (ok, no) {
-      var tx = d.transaction('s', mode);
-      var out = fn(tx.objectStore('s'));
+      var tx = d.transaction(store || 's', mode);
+      var out = fn(tx.objectStore(store || 's'));
       tx.oncomplete = function () { ok(out && out.result !== undefined ? out.result : out); };
       tx.onerror = function () { no(tx.error); };
     });
@@ -198,8 +202,24 @@ function sync() {
     return list.filter(function (r) { return !r.done; }).reduce(function (p, r) {
       return p.then(function () { return syncOne(r); });
     }, Promise.resolve());
-  }).catch(function () {}).then(function () { syncing = null; });
+  }).then(sendQueued).catch(function () {}).then(function () { syncing = null; });
   return syncing;
+}
+
+/* Who-played records made offline: send each, oldest first; stop at the first that fails (still no network). */
+function queue(url, body) { return rec('readwrite', function (st) { st.add({ url: url, body: body }); return null; }, 'q'); }
+function sendQueued() {
+  return rec('readonly', function (st) { return st.getAll(); }, 'q').then(function (items) {
+    return (items || []).reduce(function (p, it) {
+      return p.then(function (go) {
+        if (go === false) return false;
+        return fetch(it.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: it.body }).then(function (res) {
+          if (res.status === 204 || res.ok || res.status === 401) return rec('readwrite', function (st) { st.delete(it.id); return null; }, 'q');
+          return false;
+        }, function () { return false; });
+      });
+    }, Promise.resolve());
+  });
 }
 function api(path, body) {
   return fetch('/api/wq/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body) })
@@ -229,6 +249,14 @@ function syncOne(r) {
 
 function post(req) {
   var path = new URL(req.url).pathname;
+  if (path === '/__cb/identity' || path === '/__cb/added') {
+    return req.clone().text().then(function (body) {
+      return fetch(req.clone()).then(function (res) {
+        if (res.status >= 500) return queue(req.url, body).then(function () { return json({ queued: true }, 202); });
+        return res;
+      }, function () { return queue(req.url, body).then(function () { return json({ queued: true }, 202); }); });
+    });
+  }
   if (/^\/api\/wq\/(session|answers|finish|hubdoor)$/.test(path)) {
     return req.clone().text().then(function (t) {
       var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) {}

@@ -8,10 +8,14 @@
   "scripts": {
     "start": "node server.mjs",
     "rig:check": "node rig/cb-check.mjs",
-    "rig:tour": "node rig/tour.mjs"
+    "rig:tour": "node rig/tour.mjs",
+    "rig:who": "node rig/who-check.mjs"
   },
-  "dependencies": {
+  "devDependencies": {
     "playwright-core": "^1.59.1",
     "puppeteer-core": "^24.39.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

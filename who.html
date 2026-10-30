@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Who's playing?</title>
+<style>
+  :root { color-scheme: light; --ink: #1f2937; --quiet: #6b7280; --go: #15803d; --card: #fffdf7; --line: #e7dfc9; --pick: #fef3c7; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 18px/1.4 system-ui, sans-serif; background: #f6f1e4; color: var(--ink); }
+  main { max-width: 1040px; margin: 0 auto; padding: 18px 16px 40px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  header h1 { font-size: 28px; margin: 0; flex: 1; }
+  .crumbs { color: var(--quiet); font-size: 16px; min-height: 22px; margin-bottom: 12px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .grid.names { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  button.tile { font: 600 22px system-ui, sans-serif; padding: 22px 12px; border-radius: 14px; border: 2px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; text-align: center; }
+  button.tile small { display: block; font: 400 15px system-ui, sans-serif; color: var(--quiet); margin-top: 4px; }
+  button.tile:hover, button.tile:focus { border-color: var(--go); outline: none; background: var(--pick); }
+  button.name { font-size: 19px; padding: 14px 10px; text-align: left; }
+  .bar { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+  input[type=search], input[type=text] { flex: 1; min-width: 220px; font: 20px system-ui, sans-serif; padding: 12px 14px; border-radius: 12px; border: 2px solid var(--line); background: #fff; }
+  button.act { font: 600 18px system-ui, sans-serif; padding: 12px 18px; border-radius: 12px; border: 0; background: var(--go); color: #fff; cursor: pointer; }
+  button.soft { font: 600 17px system-ui, sans-serif; padding: 12px 18px; border-radius: 12px; border: 2px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+  .note { color: var(--quiet); font-size: 16px; margin: 6px 0 12px; }
+  .hello { font-size: 30px; font-weight: 700; margin: 8px 0 14px; }
+  .empty { color: var(--quiet); padding: 16px 4px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1 id="title">Who's playing?</h1><button class="soft" id="back" type="button">← Back</button></header>
+  <div class="crumbs" id="crumbs"></div>
+  <section id="view"></section>
+</main>
+<script>
+/* Who's playing on this shared Chromebook: class → section → name (search by name or roll), or "I'm not on the list"
+ * → type your name → "Is it …?" from that section → "Add me". The school's roster comes from the pilot server
+ * (/__cb/roster, needs this Chromebook's device key) and is kept by the offline worker, so this works offline.
+ * The chosen child is kept on this device (cb-child) and handed to Jugnu's quiz by boot.js. Every pick and every
+ * "Add me" is posted to /__cb/identity or /__cb/added; offline, the worker queues them and sends them later. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var get = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  var set = function (k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage off */ } };
+  var KEY = get('cb-key') || '';
+  var DEVICE = get('cb-device') || (function () { var d = 'd' + Math.random().toString(36).slice(2, 12); set('cb-device', d); return d; }());
+  var R = null, grade = null, section = null, history = [], current = null;
+
+  function post(path, body) {
+    body.key = KEY; body.device = DEVICE; body.at = new Date().toISOString();
+    return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(function () {});
+  }
+  function crumbs() { $('crumbs').textContent = [R && R.school.name, grade && ('Class ' + grade), section && ('Section ' + section)].filter(Boolean).join('  ›  '); }
+  function show(html, title) { $('view').innerHTML = html; $('title').textContent = title || "Who's playing?"; crumbs(); }
+  /* go(fn): open a screen, remembering the one we came from; Back reopens it. */
+  function go(fn) { if (current) history.push(current); current = fn; fn(); }
+  $('back').onclick = function () {
+    var prev = history.pop();
+    if (!prev) { location.href = '/cb'; return; }
+    if (prev === grades) { grade = null; section = null; } else if (prev === sections) { section = null; }
+    current = prev; prev();
+  };
+
+  /* A match between what a child typed and a roster name: same start, or one letter off. */
+  function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z؀-ۿ0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
+  function close(a, b) {
+    a = norm(a); b = norm(b);
+    if (!a || !b) return false;
+    if (b.indexOf(a) === 0 || a.indexOf(b) === 0) return true;
+    if (Math.abs(a.length - b.length) > 2) return false;
+    var d = [], i, j;
+    for (i = 0; i <= a.length; i++) { d[i] = [i]; }
+    for (j = 0; j <= b.length; j++) { d[0][j] = j; }
+    for (i = 1; i <= a.length; i++) for (j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length] <= 2;
+  }
+
+  function grades() {
+    grade = null; section = null;
+    var gs = []; R.classes.forEach(function (c) { if (gs.indexOf(c.grade) < 0) gs.push(c.grade); });
+    show('<p class="note">Tap your class.</p><div class="grid">' + gs.map(function (g) {
+      return '<button class="tile" data-g="' + esc(g) + '">Class ' + esc(g) + '</button>';
+    }).join('') + '</div>', "Who's playing?");
+    [].forEach.call(document.querySelectorAll('[data-g]'), function (b) { b.onclick = function () { grade = b.getAttribute('data-g'); go(sections); }; });
+  }
+  function sections() {
+    var cs = R.classes.filter(function (c) { return c.grade === grade; });
+    if (cs.length === 1) { section = cs[0].section; current = names; return names(); } // one section: straight to the names
+    show('<p class="note">Tap your section.</p><div class="grid">' + cs.map(function (c) {
+      return '<button class="tile" data-s="' + esc(c.section) + '">Section ' + esc(c.section) + '<small>' + c.students.length + ' children</small></button>';
+    }).join('') + '</div>', 'Class ' + grade);
+    [].forEach.call(document.querySelectorAll('[data-s]'), function (b) { b.onclick = function () { section = b.getAttribute('data-s'); go(names); }; });
+  }
+  function kidsHere() { var c = R.classes.find(function (x) { return x.grade === grade && x.section === section; }); return c ? c.students : []; }
+  function names() {
+    var all = kidsHere();
+    show('<div class="bar"><input type="search" id="q" placeholder="Search your name or roll number" autocomplete="off"></div>' +
+      '<div class="grid names" id="list"></div>' +
+      '<div class="bar"><button class="soft" id="notme" type="button">I\'m not on the list</button></div>', 'Class ' + grade + ' · Section ' + section);
+    var list = function () {
+      var q = norm($('q').value);
+      var kids = all.filter(function (k) { return !q || norm(k.name).indexOf(q) >= 0 || norm(k.name_ur).indexOf(q) >= 0 || String(k.roll) === q; });
+      $('list').innerHTML = kids.length ? kids.map(function (k) {
+        return '<button class="tile name" data-id="' + esc(k.id) + '">' + esc(k.name) + (k.name_ur ? ' <span dir="rtl">' + esc(k.name_ur) + '</span>' : '') + '<small>Roll ' + esc(k.roll || '–') + '</small></button>';
+      }).join('') : '<div class="empty">No one by that name in this section. Tap "I\'m not on the list".</div>';
+      [].forEach.call(document.querySelectorAll('[data-id]'), function (b) {
+        b.onclick = function () { var k = all.find(function (x) { return x.id === b.getAttribute('data-id'); }); choose({ student_id: k.id, name: k.name, roll: k.roll, added: false }); };
+      });
+    };
+    $('q').oninput = list; list(); $('q').focus();
+    $('notme').onclick = function () { go(typeName); };
+  }
+  function typeName() {
+    show('<p class="note">Type the name you are called by in class.</p><div class="bar"><input type="text" id="nm" autocomplete="off" maxlength="40" placeholder="Your name"><button class="act" id="go" type="button">Next</button></div><div id="sugg"></div>', 'Class ' + grade + ' · Section ' + section);
+    $('nm').focus();
+    var next = function () {
+      var typed = $('nm').value.trim();
+      if (typed.length < 2) { $('nm').focus(); return; }
+      var near = kidsHere().filter(function (k) { return close(typed, k.name); }).slice(0, 4);
+      if (!near.length) return addMe(typed);
+      $('sugg').innerHTML = '<p class="note">Is one of these you?</p><div class="grid names">' + near.map(function (k) {
+        return '<button class="tile name" data-id="' + esc(k.id) + '">It\'s me: ' + esc(k.name) + '<small>Roll ' + esc(k.roll || '–') + '</small></button>';
+      }).join('') + '</div><div class="bar"><button class="soft" id="no" type="button">No, add me as ' + esc(typed) + '</button></div>';
+      [].forEach.call(document.querySelectorAll('#sugg [data-id]'), function (b) {
+        b.onclick = function () { var k = kidsHere().find(function (x) { return x.id === b.getAttribute('data-id'); }); choose({ student_id: k.id, name: k.name, roll: k.roll, added: false }); };
+      });
+      $('no').onclick = function () { addMe(typed); };
+    };
+    $('go').onclick = next;
+    $('nm').onkeydown = function (e) { if (e.key === 'Enter') next(); };
+  }
+  function addMe(typed) {
+    var local = 'new-' + DEVICE + '-' + Date.now().toString(36);
+    post('/__cb/added', { local_id: local, name: typed, grade: grade, section: section, school_id: R.school.id });
+    choose({ student_id: null, local_id: local, name: typed, roll: '', added: true });
+  }
+  function choose(kid) {
+    kid.grade = grade; kid.section = section; kid.school_id = R.school.id;
+    set('cb-child', JSON.stringify(kid));
+    // A new child on this Chromebook: the quiz forgets the last child's session.
+    try { Object.keys(localStorage).filter(function (k) { return /^wq_s_/.test(k); }).forEach(function (k) { localStorage.removeItem(k); }); } catch (e) { /* storage off */ }
+    post('/__cb/identity', { event: 'picked', student_id: kid.student_id, local_id: kid.local_id || null, name: kid.name, grade: grade, section: section, school_id: R.school.id, added: kid.added });
+    location.href = '/cb?picked=1';
+  }
+
+  function load() {
+    if (!KEY) { $('view').innerHTML = '<p class="empty">This Chromebook has no device key yet. Open the setup link once (it ends in ?key=…).</p>'; return; }
+    fetch('/__cb/roster?key=' + encodeURIComponent(KEY)).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (r) { R = r; current = grades; grades(); })
+      .catch(function (e) { $('view').innerHTML = '<p class="empty">The class lists are not on this Chromebook yet (' + esc(e.message) + '). Connect to Wi-Fi and press Get ready on the start page.</p>'; });
+  }
+  load();
+}());
+</script>
+</body>
+</html>

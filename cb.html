@@ -41,6 +41,12 @@
     <div id="log"></div>
   </div>
 
+  <div class="card hidden" id="who">
+    <h2>Who's playing?</h2>
+    <p id="child" class="state"></p>
+    <p><a class="big" id="pick" href="/who" style="display:inline-block;text-decoration:none;font:600 18px system-ui,sans-serif;padding:14px 22px;border-radius:10px;background:#15803d;color:#fff">Who's playing? Tap here</a></p>
+  </div>
+
   <div class="card hidden" id="step2">
     <h2>2. Turn Wi-Fi off, then play</h2>
     <ol>
@@ -62,6 +68,20 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var CFG = null;
+  // The device key arrives once, in this Chromebook's setup link (/cb?key=…); it unlocks the school's class lists.
+  (function () {
+    var k = new URLSearchParams(location.search).get('key');
+    if (k) { try { localStorage.setItem('cb-key', k); } catch (e) {} history.replaceState(null, '', '/cb'); }
+  }());
+  var KEY = (function () { try { return localStorage.getItem('cb-key') || ''; } catch (e) { return ''; } }());
+  function child() { try { return JSON.parse(localStorage.getItem('cb-child') || 'null'); } catch (e) { return null; } }
+  function showChild() {
+    var c = child();
+    if (!KEY) return;
+    $('who').classList.remove('hidden');
+    $('child').textContent = c ? ('Now playing: ' + c.name + ' (Class ' + c.grade + '-' + c.section + (c.roll ? ', roll ' + c.roll : '') + (c.added ? ', new' : '') + ')') : 'No child picked yet.';
+    $('pick').textContent = c ? 'Not ' + c.name + '? Pick who is playing' : "Who's playing? Tap here";
+  }
   function log(t) { var l = $('log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; }
   function ask(msg, wait) {
     var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -107,6 +127,8 @@
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
       return fetch('/__cb/manifest').then(function (r) { return r.json(); });
     }).then(function (m) {
+      // The school's class lists, kept for offline (only with this Chromebook's key).
+      if (m.roster && KEY) fetch('/__cb/roster?key=' + encodeURIComponent(KEY)).then(function (r) { log('class lists: ' + (r.ok ? 'saved' : 'refused (' + r.status + ')')); }, function () {});
       var own = new URLSearchParams(location.search).get('hub');
       if (own) m.hub = own; // a test rig uses its own child, so the Chromebook's link stays unopened
       CFG = m;
@@ -180,6 +202,7 @@
     }).then(function () {
       setPct(100, 'Ready. Everything below now works on this Chromebook without Wi-Fi.');
       $('step2').classList.remove('hidden');
+      showChild();
       var links = [['Child home', 'Stories, games, videos', '/h/' + CFG.hub]].concat(CFG.quizzes.map(function (q, i) { return ['Quiz: ' + CFG.quizNames[i], 'Class quiz ' + q, '/q/' + q]; }));
       games.forEach(function (g) { links.push([/sa-game/.test(g) ? 'Reading game' : 'Number game', /sa-game/.test(g) ? "Jugnu's big flight" : 'Numbers with Jugnu', g]); });
       $('links').innerHTML = links.map(function (l) { return '<a href="' + l[2] + '">' + l[0] + '<small>' + l[1] + '</small></a>'; }).join('');
@@ -191,6 +214,8 @@
   $('ready').onclick = run;
   $('next').onclick = function () {
     Object.keys(localStorage).filter(function (k) { return /^wq_s_/.test(k); }).forEach(function (k) { localStorage.removeItem(k); });
+    try { localStorage.removeItem('cb-child'); } catch (e) {}
+    if (KEY) { location.href = '/who'; return; }
     $('next').textContent = 'Done: the next child starts fresh';
   };
   // Device facts for the full-library question: free space for this site, and the voices this Chromebook speaks
@@ -217,6 +242,7 @@
   }());
   var saved = localStorage.getItem('cb-links');
   if (saved) { $('links').innerHTML = saved; $('step2').classList.remove('hidden'); }
+  showChild();
   if (sessionStorage.getItem('cb-continue')) { sessionStorage.removeItem('cb-continue'); run(); }
   status();
 }());

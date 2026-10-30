@@ -35,6 +35,82 @@
   document.addEventListener('DOMContentLoaded', homeButton);
   setTimeout(homeButton, 1500);
 
+  // The child picked on this Chromebook ("Who's playing?") answers Jugnu's own "who is playing" for them: their
+  // remembered name is tapped, or their name is typed on the name screen; a resumed quiz of another child is left
+  // with "Not …?". Jugnu's screens are unchanged. When the quiz starts, who played is recorded against the roster.
+  /* Who-played records are written to this device first (cb-events), then sent; a record still on the device is
+   * sent from the next page that loads. Leaving a page, or having no network, never loses one. */
+  function events() { try { return JSON.parse(localStorage.getItem('cb-events') || '[]'); } catch (e) { return []; } }
+  function keepEvent(ev) {
+    try {
+      ev.key = localStorage.getItem('cb-key') || ''; ev.device = localStorage.getItem('cb-device') || ''; ev.at = new Date().toISOString();
+      var list = events(); list.push(ev); localStorage.setItem('cb-events', JSON.stringify(list));
+    } catch (e) { /* storage off */ }
+    sendEvents();
+  }
+  var sending = false;
+  function sendEvents() {
+    var list = events();
+    if (sending || !list.length) return;
+    sending = true;
+    fetch('/__cb/identity', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(list[0]) }).then(function (r) {
+      sending = false;
+      // 204 sent, 202 kept by the offline worker for later, 401 refused for good: either way it has left this list.
+      if (r.status === 204 || r.status === 202 || r.status === 401) {
+        try { var now = events(); now.shift(); localStorage.setItem('cb-events', JSON.stringify(now)); } catch (e) { return; }
+        sendEvents();
+      }
+    }, function () { sending = false; });
+  }
+  setTimeout(sendEvents, 2000);
+
+  function autoWho() {
+    var kid = null;
+    try { kid = JSON.parse(localStorage.getItem('cb-child') || 'null'); } catch (e) { return; }
+    if (!kid || !kid.name || !/^\/q\//.test(location.pathname)) return;
+    var done = {}, steps = 0;
+    var same = function (t) { return String(t || '').trim().toLowerCase() === String(kid.name).trim().toLowerCase(); };
+    var act = function () {
+      var root = document.getElementById('wq');
+      if (!root || steps > 10) return;
+      var m = root.getAttribute('data-m') || '';
+      var el = function (id) { var b = document.getElementById(id); return b && b.offsetParent !== null && !b.disabled ? b : null; };
+      var tap = function (b) { if (b) { done[m] = 1; steps++; b.click(); } return !!b; };
+      // Jugnu's own button ids, so this works on English and Urdu screens alike.
+      if (m === 'M3-continue' && !done[m]) {
+        var who = (String(root.innerText).match(/Welcome back, ([^!]+)!/) || [])[1];
+        if (who && !same(who)) tap(el('wq-restart'));
+        return;
+      }
+      if ((m === 'M4-who-v2' || m === 'M4') && !done[m]) {
+        var chip = [].slice.call(root.querySelectorAll('button.wq-kid')).filter(function (b) { return b.offsetParent !== null && same(b.innerText); })[0];
+        tap(chip || el('wq-someone') || el('wq-play') || el('wq-new'));
+        return;
+      }
+      if ((m === 'M4-name' || m === 'M4-new') && !done[m]) {
+        var input = document.getElementById('wq-name'), start = el('wq-start');
+        if (input && start) {
+          done[m] = 1; steps++;
+          input.value = kid.name;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          setTimeout(function () { start.click(); }, 300);
+        }
+        return;
+      }
+      // "Is it …?": yes when Jugnu offers this child's own name (the roster pick is the record of who it really was).
+      if (m === 'M4-isyou' && !done[m]) { tap(String(root.innerText).toLowerCase().indexOf(String(kid.name).toLowerCase()) >= 0 ? el('wq-yes') : el('wq-diff')); return; }
+      if (m === 'M4-notfound' && !done[m]) { tap(el('wq-force')); return; }
+      if (m === 'M6' && !done.started) {
+        done.started = 1;
+        keepEvent({ event: 'quiz_start', code: location.pathname.split('/')[2], student_id: kid.student_id || null, local_id: kid.local_id || null,
+          name: kid.name, grade: kid.grade, section: kid.section, school_id: kid.school_id, added: !!kid.added });
+      }
+    };
+    new MutationObserver(function () { setTimeout(act, 250); }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['data-m'], childList: true });
+    setTimeout(act, 800);
+  }
+  document.addEventListener('DOMContentLoaded', autoWho);
+
   function ask(sw, msg, waitMs) {
     return new Promise(function (ok) {
       var ch = new MessageChannel();

@@ -5,7 +5,8 @@ a number game and a reading game. This pilot proves it can run **with no interne
 everything a child does reaches the server **by itself once the Chromebook is back online**.
 
 It is a pilot, not the product: it sits in front of a running Jugnu portal as a small proxy and adds an offline
-layer. Nothing in Jugnu itself was changed. What Jugnu needs so that this works without the proxy is listed under
+layer, plus a **"Who's playing?"** screen that lets a child find themselves in their school's class list.
+It runs as a normal web service (Railway), so a Chromebook just opens its https address. Nothing in Jugnu itself was changed. What Jugnu needs so that this works without the proxy is listed under
 [What is left](#what-is-left).
 
 ## What is proven (28–30 Oct 2026)
@@ -23,6 +24,23 @@ to one shared account:
 
 "Network off" means the server dropped every connection **and** the Chromebook's browser was offline
 (`navigator.onLine === false`), so nothing could come from the internet.
+
+## Who's playing? (class lists on a shared Chromebook)
+
+1. The child taps their **class**, then their **section**.
+2. They tap their **name** in that section's list (first name + roll number), or **search** by name or roll number.
+3. Not on the list? **"I'm not on the list"** → they type their name → Jugnu suggests close matches from that section
+   (**"Is one of these you?"**) → else **"Add me"**: they are added with their class and section and play at once.
+4. The quiz then starts as that child without asking again (the pilot answers Jugnu's own "who is playing" screens).
+5. **Next child** goes back to step 1.
+
+Every pick, every "Add me" and every quiz start is written on the Chromebook first and sent to the server whenever
+there is a connection (`/__cb/identity`, `/__cb/added`), so each result can be joined to the roster child. The
+children who added themselves are listed at `/__cb/added?key=…` for a teacher or admin to match to the roster.
+
+The school's class list is loaded once by Get ready and kept on the device, so all of this works offline. It holds
+**first names and roll numbers only** (no family names, phones or dates of birth), and the server gives it only to a
+Chromebook that has the **device key**, which the Chromebook receives once from its setup link (`/cb?key=…`).
 
 ## How it works
 
@@ -49,20 +67,33 @@ Chromebook (Chrome)                          this repo                       Jug
 
 ## Run it
 
+Settings (environment variables; on a laptop, files work too):
+
+| Variable | What |
+|---|---|
+| `UPSTREAM` | the Jugnu portal this sits in front of |
+| `CB_CONFIG` | JSON as in `cb-config.example.json` (else `./cb-config.json`) |
+| `ROSTER_B64` | the school's class list, gzip + base64 of `{school, classes:[{grade, section, students:[{id, name, name_ur, roll}]}]}` (else `ROSTER_FILE`, a path to that JSON) |
+| `DEVICE_KEY` | the key a Chromebook must present to get the class list and send who played |
+
+**As a service (Railway or any host):** deploy this repo with those variables set (the start command is
+`node server.mjs`, it listens on `PORT`), attach a volume at `/app/logs` so who-played records survive a redeploy,
+and give each Chromebook its setup link once: `https://<service>/cb?key=<DEVICE_KEY>`.
+
 ```bash
-npm install
+npm install                                               # browser drivers for the test scripts (dev only)
 UPSTREAM=https://<jugnu portal> node server.mjs          # http://localhost:8791
-cloudflared tunnel --url http://localhost:8791             # optional: an https address for a real Chromebook
-cp cb-config.example.json cb-config.json                   # fill in a child home link and two class quiz codes
+cp cb-config.example.json cb-config.json                   # a child home link and two class quiz codes
 ```
 
 **On a laptop:** `node rig/cb-check.mjs <child home token>` runs Get ready, turns the network off and opens every
 link; `node rig/run-quiz.mjs <code> "<name>" [--keep] [--offline] [--new-child]` plays a quiz;
-`node rig/tour.mjs <token> online|offline` tours storybook, video, number game and reading game.
+`node rig/tour.mjs <token> online|offline` tours storybook, video, number game and reading game;
+`node rig/who-check.mjs <device key> "<new name>"` runs Who's playing? online (pick a child) and offline (add me).
 For a true offline run, `touch OFFLINE` (the server drops every connection) — a browser's own offline switch does
 not reach the worker's requests. `rm OFFLINE` to come back.
 
-**On a Chromebook by hand:** sign in to the shared school account (not Guest), open `https://<tunnel>/cb`, tap
+**On a Chromebook by hand:** sign in to the shared school account (not Guest), open `https://<service>/cb?key=<key>` once, tap
 **Get ready for offline**, wait for "Ready", switch Wi-Fi off and play. Switch Wi-Fi on: section 3 shows the quiz
 going from "Waiting to send" to "Sent".
 
