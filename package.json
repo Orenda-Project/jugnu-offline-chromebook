@@ -1,0 +1,17 @@
+{
+  "name": "jugnu-offline-chromebook",
+  "version": "0.1.0",
+  "description": "Pilot: NIETE's Jugnu child experience running offline on school Chromebooks, with results synced when back online",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.mjs",
+    "rig:check": "node rig/cb-check.mjs",
+    "rig:tour": "node rig/tour.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.59.1",
+    "puppeteer-core": "^24.39.0"
+  }
+}

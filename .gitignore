@@ -1,0 +1,7 @@
+node_modules/
+logs/
+shots/
+.chrome-profile/
+OFFLINE
+cb-config.json
+.env

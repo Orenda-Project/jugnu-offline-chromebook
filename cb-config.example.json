@@ -1,0 +1,5 @@
+{
+  "hub": "<a signed child home link token: see tools/sign-hub.mjs>",
+  "quizzes": ["<CLASS QUIZ CODE 1>", "<CLASS QUIZ CODE 2>"],
+  "quizNames": ["<name shown for quiz 1>", "<name shown for quiz 2>"]
+}

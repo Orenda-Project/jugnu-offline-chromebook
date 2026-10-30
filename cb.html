@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jugnu offline test</title>
+<style>
+  :root { color-scheme: light; --ink: #1f2937; --quiet: #6b7280; --go: #15803d; --warn: #b45309; --card: #fffdf7; --line: #e7dfc9; }
+  body { margin: 0; font: 17px/1.5 system-ui, sans-serif; background: #f6f1e4; color: var(--ink); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  .sub { color: var(--quiet); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 0 0 16px; }
+  .card h2 { font-size: 18px; margin: 0 0 8px; }
+  button.big { font: 600 18px system-ui, sans-serif; padding: 14px 22px; border-radius: 10px; border: 0; background: var(--go); color: #fff; cursor: pointer; }
+  button.big[disabled] { background: #9ca3af; cursor: default; }
+  .bar { height: 10px; background: #e5e7eb; border-radius: 6px; overflow: hidden; margin: 12px 0 6px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--go); transition: width .3s; }
+  .state { font-weight: 600; }
+  .state.off { color: var(--warn); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+  .grid a { display: block; padding: 14px; border-radius: 10px; background: #fff; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 600; }
+  .grid a small { display: block; font-weight: 400; color: var(--quiet); }
+  ol { margin: 6px 0 0; padding-left: 22px; }
+  #log { font: 13px/1.4 ui-monospace, monospace; color: var(--quiet); white-space: pre-wrap; max-height: 140px; overflow: auto; }
+  .hidden { display: none; }
+  iframe.warm { position: absolute; width: 1366px; height: 633px; left: -20000px; top: 0; border: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Jugnu offline test</h1>
+  <p class="sub">On this Chromebook, in Guest. Network: <span id="net" class="state">…</span> · <span id="kept">0</span> files saved here</p>
+
+  <div class="card" id="step1">
+    <h2>1. Get ready for offline (Wi-Fi on)</h2>
+    <p>Saves Jugnu, two quizzes, the Grade 1 storybooks, the number game and the reading game on this Chromebook. Takes a few minutes.</p>
+    <button class="big" id="ready">Get ready for offline</button>
+    <div class="bar"><i id="pct"></i></div>
+    <div id="phase" class="sub"></div>
+    <div id="log"></div>
+  </div>
+
+  <div class="card hidden" id="step2">
+    <h2>2. Turn Wi-Fi off, then play</h2>
+    <ol>
+      <li>Click the Wi-Fi icon (bottom right) and switch Wi-Fi <b>off</b>. "Network" above turns orange.</li>
+      <li>Open any of these and play. Everything comes from this Chromebook.</li>
+    </ol>
+    <div class="grid" id="links" style="margin-top:12px"></div>
+    <p class="sub" style="margin-top:12px">Another child's turn? <button id="next">Next child</button> (the quiz forgets the last child on this Chromebook)</p>
+  </div>
+
+  <div class="card hidden" id="step3">
+    <h2>3. Turn Wi-Fi back on</h2>
+    <p>Quizzes played offline wait on this Chromebook and send themselves when Wi-Fi is back.</p>
+    <div id="outbox" class="state">Nothing waiting.</div>
+  </div>
+</main>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var CFG = null;
+  function log(t) { var l = $('log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; }
+  function ask(msg, wait) {
+    var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!sw) return Promise.resolve(null);
+    return new Promise(function (ok) {
+      var ch = new MessageChannel(); var t = setTimeout(function () { ok(null); }, wait || 4000);
+      ch.port1.onmessage = function (e) { clearTimeout(t); ok(e.data); };
+      sw.postMessage(msg, [ch.port2]);
+    });
+  }
+  function status() {
+    var on = navigator.onLine; $('net').textContent = on ? 'online' : 'OFF'; $('net').className = 'state' + (on ? '' : ' off');
+    ask({ type: 'stats' }).then(function (s) { if (s) $('kept').textContent = s.kept; });
+    ask({ type: 'outbox' }).then(function (l) {
+      if (!l || !l.length) return;
+      $('step3').classList.remove('hidden');
+      $('outbox').innerHTML = l.map(function (r) {
+        return (r.done ? '✓ Sent: ' : '⏳ Waiting to send: ') + (r.name || 'a child') + ' — ' + r.answers + ' answers' + (r.err && !r.done ? ' (will retry)' : '');
+      }).join('<br>');
+    });
+    if (on && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'report' });
+  }
+  setInterval(status, 3000);
+  addEventListener('online', status); addEventListener('offline', status);
+
+  function setPct(p, phase) { $('pct').style.width = Math.round(p) + '%'; if (phase) $('phase').textContent = phase; }
+  function warm(urls) { return ask({ type: 'warm', urls: urls }, 240000); }
+  function frame(src, ms) {
+    return new Promise(function (ok) {
+      var f = document.createElement('iframe'); f.className = 'warm'; f.src = src;
+      var done = false; var finish = function () { if (done) return; done = true; setTimeout(function () { ok(f); }, ms); };
+      f.onload = finish; setTimeout(finish, ms + 15000);
+      document.body.appendChild(f);
+    });
+  }
+  function abs(u) { return new URL(u, location.origin).href; }
+
+  function run() {
+    $('ready').disabled = true;
+    var kid = null, games = [];
+    setPct(3, 'Installing the offline worker…');
+    return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
+      if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
+      return fetch('/__cb/manifest').then(function (r) { return r.json(); });
+    }).then(function (m) {
+      var own = new URLSearchParams(location.search).get('hub');
+      if (own) m.hub = own; // a test rig uses its own child, so the Chromebook's link stays unopened
+      CFG = m;
+      // This Chromebook's child home, for Home buttons that must work offline (worker + every quiz page).
+      try { localStorage.setItem('cb-hub', m.hub); } catch (e) {}
+      if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'hub', hub: m.hub });
+      setPct(10, 'Saving Jugnu and its voices (' + m.static.length + ' files)…');
+      return warm(m.static.map(abs).concat([location.href]));
+    }).then(function (r) {
+      log('app + voices: ' + (r ? r.warmed : '?') + ' new files');
+      setPct(35, 'Opening the child home…');
+      return frame('/h/' + CFG.hub, 7000);
+    }).then(function (f) {
+      // What a child does: open the Games door (its list carries the game links and the child's id), then Stories.
+      var d = f.contentDocument;
+      var door = function (name) { var a = d.querySelector('a.wq-door[href="#' + name + '"]'); if (a) a.click(); return new Promise(function (ok) { setTimeout(ok, 3500); }); };
+      return door('games').then(function () {
+        var a = [].slice.call(d.querySelectorAll('a[href]')).map(function (x) { return x.getAttribute('href'); });
+        games = a.filter(function (h) { return /^\/(c|sa-game)\//.test(h); }).filter(function (h, i, all) { return all.indexOf(h) === i; });
+        kid = a.map(function (h) { var m = /[?&]kid=([0-9a-f]+)/.exec(h); return m && m[1]; }).filter(Boolean)[0] || null;
+        return door('stories');
+      }).then(function () { return f; });
+    }).then(function () {
+      log('child home saved; games: ' + games.length + (kid ? '' : ' (no child id found)'));
+      setPct(45, 'Saving the storybooks…');
+      return fetch('/api/wq/stories/shelf/h/' + CFG.hub + '?kid=' + (kid || '') + '&l=en').then(function (r) { return r.text(); });
+    }).then(function (shelf) {
+      var ids = []; var re = /"(?:id|book_id|bookId)":"([0-9a-f-]{36})"/g, m;
+      while ((m = re.exec(shelf))) if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
+      log('storybooks on the shelf: ' + ids.length);
+      return ids.slice(0, 12).reduce(function (p, id, i) {
+        return p.then(function () {
+          return fetch('/api/wq/stories/book/' + id + '/h/' + CFG.hub + '?kid=' + (kid || '')).then(function (r) { return r.text(); }).then(function (b) {
+            var files = []; var fr = /([a-z]{1,8}\d{0,3}-[0-9a-f]{8}\.(?:webp|ogg|mp3|jpg|json))/g, x;
+            while ((x = fr.exec(b))) if (files.indexOf(x[1]) < 0) files.push(x[1]);
+            setPct(45 + 25 * (i + 1) / Math.min(ids.length, 12));
+            return warm(files.map(function (f) { return abs('/s/' + id + '/' + f); }));
+          });
+        });
+      }, Promise.resolve());
+    }).then(function () {
+      setPct(72, 'Saving the quizzes…');
+      return CFG.quizzes.reduce(function (p, q) { return p.then(function () { return frame('/q/' + q, 6000); }); }, Promise.resolve());
+    }).then(function () {
+      setPct(85, 'Saving the number game and the reading game…');
+      return games.reduce(function (p, g) { return p.then(function () { return frame(g, 9000); }); }, Promise.resolve());
+    }).then(function () {
+      // The number game: its home and the exercise itself are GETs the game makes only when a child taps in.
+      var q = '?lang=en&kid=' + (kid || '');
+      var media = function (t) {
+        var out = [], re = /(https?:\/\/[^"'\s]+?\.(?:mp3|ogg|opus|webp|png|jpg)(?:\?[^"'\s]*)?|\/(?:wq|sa|s)\/[^"'\s]+?\.(?:mp3|ogg|opus|webp|png|jpg))/g, x;
+        while ((x = re.exec(t))) out.push(x[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/'));
+        return out;
+      };
+      var ch = games.some(function (g) { return /^\/c\//.test(g); });
+      return (ch ? Promise.all(['', '/numbers'].map(function (ex) {
+        return fetch('/api/wq/ch/' + CFG.hub + ex + q).then(function (r) { return r.text(); }).catch(function () { return ''; });
+      })).then(function (bodies) { return warm(media(bodies.join('\n')).map(abs)); }) : Promise.resolve(null)).then(function (r) {
+        log('number game: ' + (r ? r.warmed : 0) + ' clips/pictures');
+        setPct(92, 'Saving the reading game voices…');
+        // The reading game: both batteries and every clip they name (its own worker finds them in this page's saved copies).
+        return Promise.all(['en', 'ur'].map(function (l) {
+          var u = '/sa/batteries/sa.game.G1.' + l + '.json';
+          return fetch(u).then(function (r) { return r.text(); }).then(function (t) {
+            var keys = [], re = /"(sa\/[^"]+?\.mp3)"/g, x;
+            while ((x = re.exec(t))) if (keys.indexOf(x[1]) < 0) keys.push(x[1]);
+            return [abs(u)].concat(keys.map(function (k) { return abs('/' + k); }));
+          }).catch(function () { return []; });
+        }));
+      }).then(function (lists) { return warm([].concat.apply([], lists)); }).then(function (r) { log('reading game: ' + (r ? r.warmed : 0) + ' new clips'); });
+    }).then(function () {
+      setPct(100, 'Ready. Everything below now works on this Chromebook without Wi-Fi.');
+      $('step2').classList.remove('hidden');
+      var links = [['Child home', 'Stories, games, videos', '/h/' + CFG.hub]].concat(CFG.quizzes.map(function (q, i) { return ['Quiz: ' + CFG.quizNames[i], 'Class quiz ' + q, '/q/' + q]; }));
+      games.forEach(function (g) { links.push([/sa-game/.test(g) ? 'Reading game' : 'Number game', /sa-game/.test(g) ? "Jugnu's big flight" : 'Numbers with Jugnu', g]); });
+      $('links').innerHTML = links.map(function (l) { return '<a href="' + l[2] + '">' + l[0] + '<small>' + l[1] + '</small></a>'; }).join('');
+      localStorage.setItem('cb-links', $('links').innerHTML);
+      document.querySelectorAll('iframe.warm').forEach(function (f) { f.remove(); });
+      status();
+    }).catch(function (e) { if (e !== 'reload') { log('stopped: ' + e); $('ready').disabled = false; } });
+  }
+  $('ready').onclick = run;
+  $('next').onclick = function () {
+    Object.keys(localStorage).filter(function (k) { return /^wq_s_/.test(k); }).forEach(function (k) { localStorage.removeItem(k); });
+    $('next').textContent = 'Done: the next child starts fresh';
+  };
+  // Device facts for the full-library question: free space for this site, and the voices this Chromebook speaks
+  // (localService = works without internet). Sent once per page open.
+  (function deviceCheck() {
+    var send = function (voices) {
+      Promise.resolve(navigator.storage && navigator.storage.estimate ? navigator.storage.estimate() : {}).then(function (est) {
+        return Promise.resolve(navigator.storage && navigator.storage.persisted ? navigator.storage.persisted() : null).then(function (p) {
+          fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: {
+            quota_gb: est.quota ? Math.round(est.quota / 1e8) / 10 : null, used_mb: est.usage ? Math.round(est.usage / 1e6) : null, persisted: p,
+            memory_gb: navigator.deviceMemory || null, cores: navigator.hardwareConcurrency || null, online: navigator.onLine,
+            voices: (voices || []).map(function (v) { return v.lang + (v.localService ? ' (offline)' : ' (online)') + ' ' + v.name; }),
+            speech_recognition: !!(window.SpeechRecognition || window.webkitSpeechRecognition) } }) }).catch(function () {});
+        });
+      });
+    };
+    var ss = window.speechSynthesis;
+    if (!ss) return send([]);
+    var v = ss.getVoices();
+    if (v && v.length) return send(v);
+    var done = false;
+    ss.addEventListener('voiceschanged', function () { if (!done) { done = true; send(ss.getVoices()); } });
+    setTimeout(function () { if (!done) { done = true; send(ss.getVoices()); } }, 3000);
+  }());
+  var saved = localStorage.getItem('cb-links');
+  if (saved) { $('links').innerHTML = saved; $('step2').classList.remove('hidden'); }
+  if (sessionStorage.getItem('cb-continue')) { sessionStorage.removeItem('cb-continue'); run(); }
+  status();
+}());
+</script>
+</body>
+</html>

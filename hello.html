@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chromebook check</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; font: 18px/1.5 system-ui, sans-serif; background: #f6f1e4; color: #1f2937; }
+  main { max-width: 640px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  .ok { color: #166534; font-weight: 700; }
+  pre { background: #fff; border: 1px solid #e5e0d0; border-radius: 8px; padding: 12px; font-size: 14px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Chromebook check</h1>
+  <p id="s">Reading this Chromebook's details…</p>
+  <pre id="d"></pre>
+</main>
+<script>
+(async function () {
+  var info = {
+    ua: navigator.userAgent,
+    screen: screen.width + 'x' + screen.height + ' @' + devicePixelRatio,
+    window: innerWidth + 'x' + innerHeight,
+    cores: navigator.hardwareConcurrency,
+    memory_gb: navigator.deviceMemory,
+    lang: navigator.language,
+    online: navigator.onLine,
+    service_worker: 'serviceWorker' in navigator,
+    secure_context: window.isSecureContext,
+    touch: navigator.maxTouchPoints,
+  };
+  try {
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      info.uad = await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion', 'architecture', 'bitness', 'model', 'fullVersionList']);
+    }
+  } catch (e) { info.uad_error = String(e); }
+  try { var est = await navigator.storage.estimate(); info.storage_quota_gb = Math.round(est.quota / 1e8) / 10; } catch (e) {}
+  try { info.media = { webm: !!document.createElement('video').canPlayType('video/webm'), mp4: !!document.createElement('video').canPlayType('video/mp4'), opus: !!document.createElement('audio').canPlayType('audio/ogg; codecs=opus') }; } catch (e) {}
+  document.getElementById('d').textContent = JSON.stringify(info, null, 2);
+  try {
+    await fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hello: info }) });
+    document.getElementById('s').innerHTML = '<span class="ok">Sent to the Mac. You can close this page.</span>';
+  } catch (e) {
+    document.getElementById('s').textContent = 'Could not reach the Mac: ' + e;
+  }
+})();
+</script>
+</body>
+</html>
