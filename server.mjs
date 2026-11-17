@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { homeRoutes } from './home-routes.mjs'; // this Chromebook's child home, signed fresh (lane/home)
+import { mediaRoutes } from './media-routes.mjs'; // lesson videos through this site, so a Chromebook can keep them (lane/home)
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const arg = (name, dflt) => {
@@ -64,6 +65,8 @@ function readBody(req, cb) {
 
 // HOME (lane/home): POST /__cb/home signs this Chromebook a fresh child home; /cb/home is the address that opens it.
 const home = homeRoutes({ here: HERE, deviceKey: DEVICE_KEY, loadConfig, roster: ROSTER, readBody, log: (e) => log(e) });
+// VIDEOS (lane/home): GET /__cb/media?u=<signed media link> fetches a lesson video (or clip) for a Chromebook to keep.
+const media = mediaRoutes({ deviceKey: DEVICE_KEY, log: (e) => log(e) });
 
 const LOCAL = {
   '/__cb/sw.js': ['pilot-sw.js', 'application/javascript; charset=utf-8'],
@@ -126,6 +129,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (home(req, res, url, currentIp, ua)) return; // HOME (lane/home)
+  if (media(req, res, url, ua)) return; // VIDEOS (lane/home)
   // Get-ready steps, one file per area (ready/<name>.js); cb.html loads each and runs them after its own steps.
   const rm = /^\/__cb\/ready\/([a-z0-9-]+\.js)$/.exec(url.pathname);
   if (rm && readyList().includes(rm[1])) {

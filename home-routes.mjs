@@ -9,6 +9,8 @@
 //   POST /__cb/home         {key, device, lang?, student?}  ->  {hub, exp, ttl, now, kind}
 //   GET  /__cb/home/status  ?key=                           ->  what is set up, never a secret
 //   GET  /cb/home                                           ->  home.html: the one address that always opens the home
+//   GET  /cb/app.webmanifest                                ->  lets the start page be installed on the shelf (a
+//                                                               browser keeps an installed site's files from clean-up)
 //
 // Settings (environment):
 //   HUB_SIGNING_KEY   the key Jugnu signs child links with, for the environment UPSTREAM points at (see hub-sign.mjs
@@ -76,6 +78,15 @@ export function homeRoutes({ here, deviceKey, loadConfig, roster, readBody, log 
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
       fs.createReadStream(path.join(here, 'home.html')).pipe(res);
       log({ m: 'GET', p: url.pathname, s: 200, local: true, ua });
+      return true;
+    }
+    if (url.pathname === '/cb/app.webmanifest' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' });
+      res.end(JSON.stringify({
+        name: 'Jugnu', short_name: 'Jugnu', start_url: '/cb', scope: '/', display: 'standalone', background_color: '#f6f1e4', theme_color: '#f6f1e4',
+        icons: [{ src: '/wq/jugnu/hello.webp', sizes: '200x200', type: 'image/webp', purpose: 'any' }], // Jugnu's own icon
+        shortcuts: [{ name: 'Child home', url: '/cb/home' }, { name: "Who's playing?", url: '/who' }],
+      }));
       return true;
     }
     if (url.pathname === '/__cb/home/status' && req.method === 'GET') {
