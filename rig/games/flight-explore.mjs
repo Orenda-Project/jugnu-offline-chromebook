@@ -38,7 +38,8 @@ try {
   await page.waitForTimeout(1500);
   say('MAP: ' + JSON.stringify(await snap()).slice(0, 900));
   await shot(page, `flight-${who}-map`);
-  await page.locator(`.sg-isl[data-k="${part}"], .sg-tower[data-k="${part}"]`).first().click();
+  // the next island bobs for ever, so Playwright never sees it "stable": click where it is, as a child does
+  await page.locator(`.sg-isl[data-k="${part}"], .sg-tower[data-k="${part}"]`).first().click({ force: true });
   await page.waitForTimeout(2500);
   say('INTRO: ' + JSON.stringify(await snap()).slice(0, 1200));
   await shot(page, `flight-${who}-${part}-intro`);

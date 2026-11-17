@@ -31,7 +31,8 @@ export async function launch({ wav = null, profile = path.join(ROOT, '.chrome-pr
     const rec = (window.__cbMedia = []);
     const orig = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function () {
-      const r = { src: String(this.currentSrc || this.src || '').split('?')[0].slice(-60), ok: null, at: Date.now() };
+      // .src first: a pooled <audio> given a new src still reports the old currentSrc until it loads
+      const r = { src: String(this.src || this.currentSrc || '').split('?')[0].slice(-60), ok: null, at: Date.now() };
       rec.push(r);
       const p = orig.apply(this, arguments);
       if (p && p.then) p.then(() => { r.ok = true; }, (e) => { r.ok = (e && e.name) || 'error'; });

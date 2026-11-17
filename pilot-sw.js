@@ -58,8 +58,10 @@ function networkFirst(req, key) {
     var done = false;
     var timer = setTimeout(function () {
       if (done) return;
-      done = true;
-      kept(key).then(function (hit) { resolve(hit || offlineAnswer(req)); });
+      // (games lane) A slow answer is not "offline": with nothing kept, go on waiting for the network. The 4 s limit
+      // used to answer 503 to a first request the server did answer (the 300 KB reading battery took 4,034 ms on
+      // 17 Nov; /sa/play.html then said "This did not open"). Only a kept copy may cut the wait short.
+      kept(key).then(function (hit) { if (hit && !done) { done = true; resolve(hit); } });
     }, NETWORK_WAIT_MS);
     fetch(req).then(function (res) {
       // A server error (a dropped upstream answered by the tunnel or a school proxy as 502/503/504) counts as no
