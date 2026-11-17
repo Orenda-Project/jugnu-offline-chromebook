@@ -68,6 +68,21 @@ downloaded); `bytes: null` when neither could be read. Use it before a large dow
 after it to report what was kept. Do not plan room from a size in one of Jugnu's lists: those are there only for
 files Jugnu looked at lately (a whole class of lesson videos came with none).
 
+## Two caches, and never list one
+
+Media fetched from the media store through this site (`warm(urls, { readable: true })`: lesson videos, quiz clips,
+pictures) is kept in a cache of its own, `cb-media-v1`. Everything else is in `cb-pilot-v1`. To know whether a file
+is on the drive, ask the worker (`ask({ type: 'have', urls })`, `ask({ type: 'size', urls })`): it looks in both, by
+the file's address without its signature.
+
+**Do not list a whole cache** (`cache.keys()` with no request). Chrome refuses once the list passes about 10 MB
+("Operation too large"): 14,062 files fitted, 15,979 did not, and from then on every listing fails. With all five
+classes of lesson videos saved that is where the one cache was (18 Nov 2026). Look a file up by its address
+(`cache.match`, or `cache.keys(request)`), and keep the names you will need to find again in one small file of
+your own, as the audit now does. (Still listing the main cache today: `sw-stories.js` "stories-missing",
+`pilot-sw.js` `gChServeOf` and the file count, `games-read.js`. They work while the main cache stays under the
+limit, which the media cache is there to ensure.)
+
 ## A step can also say
 
 - `late: true` — runs after everything else, once the start page has said "Ready" (a long download that the rest

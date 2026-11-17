@@ -26,7 +26,7 @@ to one shared account:
 "Network off" means the server dropped every connection **and** the Chromebook's browser was offline
 (`navigator.onLine === false`), so nothing could come from the internet.
 
-## What is proven on the laptop rig (17 Nov 2026), waiting for the Chromebook
+## What is proven on the laptop rig (17–18 Nov 2026), waiting for the Chromebook
 
 A Chromebook-shaped Chrome (1366×768, ChromeOS user agent, its own profile) against sandbox Jugnu. The real
 Chromebook was off the network that day; every line below is a script in `rig/` to run on it.
@@ -39,9 +39,14 @@ Chromebook was off the network that day; every line below is a script in `rig/` 
 | **Check this Chromebook** (the start page's button; `rig/ready-check.mjs --check --check-offline`) | 112 things opened from the device alone in about 75 s (start page, Who's playing?, home, three doors, quiz, 6 games, 11 storybooks, 82 lesson videos each opened by a real player), and the same with the network truly off (0 requests answered) |
 | **The check finds things** (`rig/check-finds.mjs`, 7 of 7) | A lesson's video, a storybook's page picture and the Games door's list were deleted from the drive: the check named each. Get ready again put them back; the check was clean |
 | **Storybook option voices** (`npm test`) | The first Get ready with honest counts showed 126 storybook sound files "not on the server". Cause: the file-name pattern cut `q1o2-….ogg` down to `o2-….ogg`. Fixed: 356 files for 11 books (was 206), none missing |
+| **A Chromebook short of room** (`rig/videos-room-check.mjs 1,2 1200 --fits 2`, 9 of 9; `npm test`) | The site's real allowance cut to 1.2 GB (Chrome's own estimate went on saying 10.7 GB free; the start page read "Chrome allows 1.1 GB more here"). Classes 1 and 2 ticked: "Class 1 needs 1.3 GB, this Chromebook has room for 1.1 GB", nothing of Class 1 fetched; Class 2, which fits, saved whole after it (82 of 82, 604 MB); Get ready said Ready for everything else and named what did not finish; the start page listed "Class 1 112 lessons, 806 MB · no room for the rest" |
 | **Room on the drive** (`rig/storage-audit.mjs`) | Class 2 with everything else: 731 MB really on the drive, 740 MB charged by the browser. (Before the fix, 82 lesson pictures kept as unreadable copies were charged 572 MB.) |
-| **Lesson video sizes are measured** (`npm test`, `rig/ready-check.mjs --videos <class>`) | Jugnu's lists carry a lesson's size only now and then (a class came with none: "112 lessons (0 MB)" for 806 MB kept, and a room check that could never say no). Each video's length is now read before saving (one byte asked through the pilot) and the bytes kept are read back from the drive. SIZES_PROOF |
+| **Lesson video sizes are measured** (`npm test`, `rig/ready-check.mjs --videos <class>`) | Jugnu's lists carry a lesson's size only now and then (a class came with none: "112 lessons (0 MB)" for 806 MB kept, and a room check that could never say no). Each video's length is now read before saving (one byte asked through the pilot) and the bytes kept are read back from the drive. Class KG, whose list carried no sizes: the log read "lesson videos, Class KG: 28 of 28 lessons on this Chromebook (301 MB of video, 29 MB of quiz voices)", and `rig/storage-audit.mjs` counted 28 videos, 301.3 MB, and 1,976 clips, 29.4 MB, on the drive |
 | **Protected from clean-up** (`rig/persist-check.mjs`, 10 of 10, Chrome 156) | Chrome clears an unprotected site's files when the drive runs low. A new profile: not protected, the start page says so and offers **Install Jugnu on this Chromebook**. A profile whose only bookmark is the start page: protected at the first open. A profile that uses it: protected by Chrome itself after 9 opens. Still for the Chromebook: the install itself (needs https and puts an app on the shelf) |
+| **Lesson videos of Classes 1 to 5 on every Chromebook** (`rig/ready-check.mjs --videos default`, `--interrupt-videos`, `--check-offline`; `rig/storage-audit.mjs`; `npm test`) | With nobody choosing, Get ready saved everything else first ("Ready" in 164 s) and then the five classes, one after another, with real numbers on the page ("lesson videos — Class 3 (3 of 5): 41 of 94 lessons (362 MB of 830 MB)"). On the drive at the end: 518 lessons, 4,647 MB of video (112, 82, 94, 121 and 109 lessons; 806 MB, 604 MB, 830 MB, 1.3 GB, 1.1 GB), 5.2 GB with everything else. As pages with their quiz, Classes 1 to 4 took 18, 17, 30 and 49 minutes (the quiz voices, about 70 small files a lesson, are what takes the time); as videos alone Class 5 took 5 minutes. **Check this Chromebook with the network truly off: all 548 things opened, every one of the 518 lessons by a real player** (0 requests answered). Interrupted in the middle of a class (Nursery, 797 MB): the page closed and opened again, it carried on by itself; the network cut for 25 s, it waited and went on; 68 of 68 at the end |
+| **A lesson as a page or as a video alone; a cache of their own** (`npm test`; found on that run) | The first all-five run saved Classes 1 to 4 and none of Class 5, and then could not say "Ready" at all. Two causes. Jugnu gives a child with a class code a lesson **page** and a child with none the **video alone**, and the home child changed from one to the other while Get ready ran (`docs/HOME-AND-VIDEOS.md`, section 5): the step now saves either, keeps a record of each saved lesson on the drive, and the worker plays a saved lesson with no network whichever way the list points. And Chrome will not list a cache of more than about 14,000 files, which every lane does: lesson videos and their quiz clips now have a cache of their own. The same Chromebook, on the new code: Classes 1 to 4 taken over with no download (about 2 minutes each), Class 5 saved, "Ready", 25,982 files confirmed on the drive |
+| **What is not saved plays from the internet; with none it says so** (`rig/online-check.mjs fresh`, `partly 3 5`, `offline KG`, `never`; `rig/stories.mjs`, `rig/games-short.mjs`, `rig/run-quiz.mjs` on a profile that never ran Get ready) | **Network on, Get ready never pressed** (13 of 13): a lesson of each of Classes 1 to 5 played from the media store and scrubbed ahead (first picture 0.7 to 1.3 s after the tap; it streams, no video was saved), a storybook was read aloud, the big flight's map opened and a part started, a class quiz opened. With the lanes' own rigs on such a profile: a quiz played to its card, a storybook's pages read with the words lit, Numbers Island played to its card (14 stones, 208 of 208 sounds), Number warm-up and Read along to their end screens. **One class saved, network on** (6 of 6): a lesson of a class that is not saved played and scrubbed. **The same Chromebook, network truly off** (12 of 12 while the child got lessons as pages; 10 of 10 after, with lessons as videos alone): the saved class played from the drive; the door of a class never looked at, a lesson page that is not on the drive, and a lesson whose page is on the drive but whose video is not each said "This needs the internet" (in the page's language), and the home stayed whole; the saved storybook, quiz and big flight opened; nothing was answered by the server. The stories rig read two books from the drive; the games play crossed Numbers Island (209 of 209 sounds) and finished Number warm-up, its result kept on the device. **Never ran Get ready, network off** (8 of 8): the home opened from what was kept as it loaded; a storybook, a game, a quiz and a lesson that were never opened each said "This needs the internet", with Home or Back |
+| **After a deploy: a newer worker takes over** (`rig/handover-check.mjs`; `--tap`; `npm test`) | Found when a full Get ready stopped at "the child home did not open". A page asked for in the moment a newer worker takes over is never answered (Chrome hands it to a fresh copy of the outgoing worker and ends that copy; a page already being fetched is waited for: held 4 s, it opened). Get ready fell into it because it opens the home in a hidden frame the moment its first step is done. Before: 2 of 4 Get-ready runs after a changed worker file failed the step, and 2 of 30 taps placed in that moment left the page on the home for good. After: Get ready waits until the newer worker is in charge, 6 of 6; 40 of 40 taps opened the quiz (the page went again 7 times) |
 | **A picked child's own home** (`rig/perchild-check.mjs`, 6 of 6, `HOME_PER_CHILD=1`) | A class-list child Jugnu knows gets a home signed for them alone; one Jugnu does not know gets this Chromebook's home, with no empty page in between. Not yet shown with two different real children: sandbox has no class list whose ids are its own students |
 
 ## Who's playing? (class lists on a shared Chromebook)
@@ -253,6 +258,7 @@ Settings (environment variables; on a laptop, files work too):
 | `HOME_TTL_S` | optional: how long a signed home lasts. Default 604800 (7 days, Jugnu's own) |
 | `HOME_PER_CHILD` | optional, `1`: a child picked on Who's playing? gets their own Jugnu home. Only when the class list's ids are Jugnu's student ids in that database (`docs/HOME-AND-VIDEOS.md`) |
 | `MEDIA_HOSTS` | optional: host endings lesson media may be fetched from. Default `.r2.cloudflarestorage.com,.r2.dev` |
+| `READY_ONLY`, `SW_STAMP_FILE` | a rig's settings, **never a service's**: offer only some Get-ready step files; add a file's text to the worker file (plays "a new version was deployed") |
 
 **As a service (Railway or any host):** deploy this repo with those variables set (the start command is
 `node server.mjs`, it listens on `PORT`), attach a volume at `/app/logs` so who-played records survive a redeploy,
@@ -280,11 +286,18 @@ server run with `HOME_TTL_S=40`; `rig/nokey-check.mjs` against a server with no 
 with Class 2's lesson videos, the page closed half-way, then Check this Chromebook); `node rig/videos-check.mjs 2`
 (with no network: Who's playing?, the Videos door, lessons played and scrubbed, the questions after);
 `node rig/videos-sizes.mjs` (lesson video sizes per class, as Jugnu's lists give them); `CB_BASE=http://127.0.0.1:8813 node rig/persist-check.mjs`
-(when Chrome protects the saved files from clean-up); `npm test`.
+(when Chrome protects the saved files from clean-up); `node rig/ready-check.mjs --videos default --interrupt-videos`
+(all five classes; the page closed and the network cut in the middle of a class); `node rig/videos-room-check.mjs 1,2 1100 --fits 2`
+(a Chromebook short of room: Class 1 refused whole, Class 2 saved whole); `node rig/online-check.mjs fresh | partly 3 5 | offline KG`
+(what is not saved plays from the internet; with none it says so); `node rig/handover-check.mjs` and `--tap` (a newer
+worker taking over, as after a deploy); `node rig/games-short.mjs <token | own> [--offline]` (the games lane's own
+play on any profile); `npm test`.
 
-**On a Chromebook by hand:** sign in to the shared school account (not Guest), open `https://<service>/cb?key=<key>` once, tick
-the classes whose lesson videos to save, tap **Get ready for offline** and wait for "Ready" (it can be closed and
-opened again: it carries on). Tap **Check that everything opens without Wi-Fi**: it opens every saved page, story,
+**On a Chromebook by hand:** sign in to the shared school account (not Guest), open `https://<service>/cb?key=<key>` once
+and tap **Get ready for offline**. "Ready" comes first (the home, storybooks, quizzes and games work from then on);
+the lesson videos of Classes 1 to 5 follow, one class after another, with their real sizes on the page (untick a
+class to leave it out). It can be closed and opened again: it carries on. Press **Install Jugnu on this Chromebook**
+(or bookmark the page) so Chrome does not clear what was saved. Tap **Check that everything opens without Wi-Fi**: it opens every saved page, story,
 game and video from the Chromebook alone and lists anything missing. Switch Wi-Fi off and play. Switch Wi-Fi on:
 section 3 shows the quiz going from "Waiting to send" to "Sent".
 
@@ -323,6 +336,9 @@ The remaining work is filed as issues in this repo. In short:
    the pilot's own log.
 4. Lesson videos the device can keep **without this pilot's server in between**: a CORS rule on the bucket or a
    public file address (the pilot now saves them, but through its own small service: `docs/HOME-AND-VIDEOS.md`).
+   And a pack list per class (lesson → file, size, checksum), so preparing a Chromebook starts no lesson as the
+   child (each start is counted by Jugnu as the child watching) and the quiz after a video alone can be saved too
+   (today the server makes it only on the child's tap).
 5. Nothing live during a child's turn: every clip pre-recorded. A storybook's "Your turn" now works with no network
    (scored on the Chromebook, the recording scored again online); for that to be Jugnu's own it needs: a late
    reading accepted without spending the scoring day's limits (40 pages a child, the service's daily reads); the
@@ -333,8 +349,9 @@ The remaining work is filed as issues in this repo. In short:
 6. A Chromebook screen: layout for 1366×633, "saved on this device" (not "this phone"), no WhatsApp step.
 7. Offline analytics for games and usage events (storybooks: done); the time a quiz or a page was played.
 8. Proof that saved content survives a restart in a signed-in account.
-9. The whole library on the device: all storybooks and voices (~0.5 GB) plus the videos of the classes that use
-   it (0.6–1.3 GB a class, 4.6 GB for Classes 1–5; Nursery, KG and Class 6 are listed without a size on sandbox).
+9. The whole library on the device: done in the pilot (all storybooks and voices, and by default the lesson videos
+   of Classes 1 to 5). For Jugnu itself: a pack list per class (lesson → file, size, checksum), and the videos
+   on an address a Chromebook can fetch from without this pilot's server in between (item 4).
 10. Fleet measurement: per device, ready for offline, last sync, offline plays, sync delay.
 
 The learning games need these in Jugnu itself (the pilot covers each today, on its own pages only):
@@ -398,9 +415,25 @@ The learning games need these in Jugnu itself (the pilot covers each today, on i
   with none. Anything that plans room or reports what was saved must measure the files, never trust the list.
 - **Chrome protects a site's files from clean-up only when the site is installed, bookmarked or much used, and only
   when asked.** A fresh Chromebook that ran Get ready once holds 1.4 GB Chrome may clear. The start page now asks on
-  every open, says where it stands and offers the install (`docs/HOME-AND-VIDEOS.md`, section 6).
+  every open, says where it stands and offers the install (`docs/HOME-AND-VIDEOS.md`, section 8).
 - **A permission granted through the debugging port refuses all the others.** The rig grants the microphone that
   way, so every ordinary rig run says "not yet protected" whatever the site does.
+- **`navigator.storage.estimate()` does not say how much room there is.** Since Chrome 123 it answers "what this
+  site uses, plus 10 GB" on every device, however full the drive: a check built on it can never say no. The start
+  page asks by doing (it reserves the amount in the site's private files and gives it back).
+- **A newer worker's takeover loses a page asked for in that moment.** After a deploy the new worker takes over a
+  second or two after a page opens. A page already being fetched is waited for; a page asked for in the instant
+  between the old worker stopping and the new one being in charge is handed to a fresh copy of the old worker and
+  never answered. Get ready hit it 4 runs in 7 ("the child home did not open"). Get ready now waits for the new
+  worker first, and a page whose tap was cut off goes again (`docs/HOME-AND-VIDEOS.md`, section 7).
+- **Jugnu gives a lesson two ways, and a child can change from one to the other.** With a class code: a page with
+  the video and its quiz. Without: the video alone, played in the home. Jugnu looks at a child's 18 newest quiz
+  codes, and the lesson pages Get ready reads push the class quiz out of that view: Classes 1 to 4 came as pages,
+  Class 5 as videos, and a step that knew only the page saved none of it. "Saved" must be a record on the device,
+  never what today's list says.
+- **Chrome will not list a cache whose list passes about 10 MB** ("Operation too large"). 14,062 files fitted;
+  15,979 did not, and then nothing that lists the cache works (Get ready's audit could never say "Ready"). Files
+  that come by the thousand and are never listed (lesson videos, quiz clips) belong in a cache of their own.
 - **A server change needs a server restart.** With an old server running, Jugnu answered the new video route with
   a web page (`200 text/html`), and each "video" was saved as 16 KB of HTML. The worker now only saves what this
   site's own media route answered, and never a web page.

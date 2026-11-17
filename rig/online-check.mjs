@@ -214,8 +214,10 @@ try {
     // C's page and the lists of the class never looked at are taken off the drive, whatever earlier runs left there
     const sw = (msg) => page.evaluate((m) => new Promise((ok) => { const ch = new MessageChannel(); const t = setTimeout(() => ok(null), 9000); ch.port1.onmessage = (e) => { clearTimeout(t); ok(e.data); }; navigator.serviceWorker.controller.postMessage(m, [ch.port2]); }), msg);
     await page.goto(`${BASE}/cb?stay=1`, { waitUntil: 'load' });
-    await page.evaluate((u) => fetch(u).then((r) => r.text()), others[0]);
-    await sw({ type: 'drop', urls: [BASE + others[1]] });
+    if (others.length >= 2) {
+      await page.evaluate((u) => fetch(u).then((r) => r.text()), others[0]);
+      await sw({ type: 'drop', urls: [BASE + others[1]] });
+    }
     const lists = await page.evaluate(async ([g]) => {
       const hub = localStorage.getItem('cb-hub'), kid = localStorage.getItem('cb-kid');
       const u = (l, s) => `${location.origin}/api/wq/lib/h/${hub}?kid=${kid}&l=${l}&g=${encodeURIComponent(g)}${s ? '&s=' + encodeURIComponent(s) : ''}`;
@@ -223,9 +225,17 @@ try {
       return ['en', 'ur'].flatMap((l) => [u(l)].concat(subjects.map((x) => u(l, x))));
     }, [String(unseen)]);
     await sw({ type: 'drop', urls: lists });
+    if (others.length < 2) {
+      // this child gets lessons as videos alone (no class code): there are no lesson pages. The offline run then
+      // looks at the lesson watched just now and at one never watched, in the door of this class.
+      const state = await sw({ type: 'have', urls: [lists[0]] });
+      check(`set up for the offline run (lessons come as videos alone): Class ${unseen}'s lists are not on the drive`, state && state[0] === false, JSON.stringify(state));
+      fs.writeFileSync(NOTES, JSON.stringify({ unsaved: String(unsaved), unseen: String(unseen), watch: true, kid: h.kid }));
+    } else {
     const state = await sw({ type: 'have', urls: [BASE + others[0], BASE + others[1], lists[0]] });
     check(`set up for the offline run: lesson B's page is on the drive, lesson C's is not, Class ${unseen}'s lists are not`, state && state[0] === true && state[1] === false && state[2] === false, JSON.stringify(state));
     fs.writeFileSync(NOTES, JSON.stringify({ unsaved: String(unsaved), unseen: String(unseen), A: l.url, B: others[0], C: others[1], kid: h.kid }));
+    }
   }
 
   if (mode === 'offline') {
@@ -246,6 +256,23 @@ try {
     const whole = await page.evaluate(() => ({ header: !!document.querySelector('.wq-dtop, .wq-homebtn'), doors: document.querySelectorAll('a.wq-door').length, blank: document.body.innerText.trim().length < 20 }));
     check(`NO NETWORK: the Videos door of Class ${notes.unseen} (not saved, never looked at) says "This needs the internet"; the page is whole`, /This needs the internet/.test(du.needs || '') && whole.header && whole.doors === 3 && !whole.blank, (du.needs || du.text).replace(/\s+/g, ' ').slice(0, 120));
     await shot(page, 'offline-unsaved-door');
+    if (notes.watch) {
+      // lessons as videos alone: in the door of the class that is not saved (its list was seen online), the lesson
+      // watched online a moment ago, then one never watched
+      const dw = await door(notes.kid, notes.unsaved);
+      const tapAt = async (i) => {
+        await page.locator('.wq-vcard').nth(i).locator('.wq-vtap').first().click({ timeout: 8000 }).catch(() => {});
+        await page.waitForSelector('[data-cb-needs-video], [data-cb-needs-list], [data-cb-needs-net]', { timeout: 15000 }).catch(() => {});
+        return page.evaluate(() => ({ over: ((document.querySelector('[data-cb-needs-video]') || {}).innerText || '').replace(/\s+/g, ' '), card: ((document.querySelector('[data-cb-needs-list]') || {}).innerText || '').replace(/\s+/g, ' '), page: !!document.querySelector('[data-cb-needs-net]'), blank: document.body.innerText.trim().length < 20, home: !!document.querySelector('.wq-dtop, .wq-homebtn, a.wq-door, [data-tap="back"]') }));
+      };
+      const said = (r) => r.over || r.card || (r.page ? 'the needs-the-internet page' : '');
+      const w0 = dw.cards ? await tapAt(0) : { blank: true };
+      check(`NO NETWORK: a lesson of Class ${notes.unsaved} watched online a moment ago (not saved) says it needs the internet; nothing blank, a way on`, /needs the internet|انٹرنیٹ/.test(said(w0)) && !w0.blank && w0.home, said(w0).slice(0, 110));
+      await shot(page, 'offline-watch-unsaved');
+      await door(notes.kid, notes.unsaved);
+      const w1 = dw.cards ? await tapAt(Math.min(5, dw.cards - 1)) : { blank: true };
+      check(`NO NETWORK: a lesson of Class ${notes.unsaved} never opened says it needs the internet`, /needs the internet|انٹرنیٹ/.test(said(w1)) && !w1.blank && w1.home, said(w1).slice(0, 110));
+    } else {
     // lesson C: its page is nowhere on the drive
     await page.goto(BASE + notes.C, { waitUntil: 'load', timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(1200);
@@ -267,6 +294,7 @@ try {
     await page.waitForFunction(() => { const w = document.getElementById('wq'); return w && /^M/.test(w.getAttribute('data-m') || ''); }, null, { timeout: 15000 }).catch(() => {});
     const pa = await page.evaluate(() => ({ m: document.getElementById('wq') ? document.getElementById('wq').getAttribute('data-m') : null, text: document.body.innerText.replace(/\s+/g, ' ').replace(/NIETE FOR STUDENTS /, '').slice(0, 80), dead: (() => { const v = document.querySelector('video.wq-video'); return !!v && !document.querySelector('[data-cb-needs-video]'); })() }));
     check('NO NETWORK: the lesson watched online a moment ago opens whole (its questions go on), no dead player', /^M/.test(pa.m || '') && !pa.dead, `${pa.m}: ${pa.text}`);
+    }
     // saved story, quiz and game
     const s = await story();
     check(`NO NETWORK: a saved storybook ("${s.title}") is read aloud from the drive`, s.pic && s.voice && s.voice.ok === true && s.voice.max > 1.2, s.voice ? `${s.voice.src} played ${s.voice.max.toFixed(1)} s` : 'no voice started');

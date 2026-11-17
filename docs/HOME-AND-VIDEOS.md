@@ -12,6 +12,7 @@ Written 17 Nov 2026 (bd-fc5mgd.13.3). Evidence: `rig/home-check.mjs`, `rig/ready
 | `DEVICE_KEY` | already set | Signing and the video route answer only a Chromebook that presents it |
 | `CB_CONFIG` | already set | Its `hub` names the home child and is the link the key is checked against (expired is fine). Its second quiz, `TWYW23`, has been closed on sandbox: Get ready now says so; a new code is needed |
 | `HOME_PER_CHILD`, `HOME_STUDENT_IDS`, `HOME_TTL_S`, `MEDIA_HOSTS` | optional | Defaults are right for sandbox |
+| `READY_ONLY`, `SW_STAMP_FILE` | a rig only | **Never set on a service.** One offers only some Get-ready steps, the other plays "a new worker file was deployed" |
 
 Without `HUB_SIGNING_KEY` nothing breaks: the configured link is used, an expired one still opens from the saved
 copy (online and offline), but nothing new is recorded under it and the home's contents stop updating.
@@ -163,14 +164,86 @@ with a one-byte request through `/__cb/media` (the total comes back in `Content-
 after saving it reads the bytes back from the drive. The room check, the progress line, the log and the start page
 all use those numbers; a size that could not be read is called an estimate, and one that is not known is not shown.
 
-Each lesson also brings about 1 MB of quiz voice clips (Class 2: 5,815 clips, 77 MB), so a class takes about 13 %
-more than its videos; the room check counts 1.3 MB a lesson for them. Saving Class 2 took 9½ minutes on the laptop rig at about 1 MB/s; a school's line decides the
-rest.
+A lesson with a page also brings about 1 MB of quiz voice clips (Class 2: 5,815 clips), so such a class takes about
+13 % more than its videos; the room check counts 1.3 MB a lesson for them.
 
-The pilot Chromebook has about 16 GB free: all five classes fit. A class is saved only when the device has room for
-all of it; otherwise the start page says what is needed and what there is. The start page ticks the home child's
-class and the picked child's class to begin with; a teacher ticks the others (`/cb?videos=all`, `1,2` or `none`
-does the same for a script).
+**How long all five classes take** (laptop rig, 18 Nov 2026, real sizes read back from the drive; the line was
+shared with the other lanes' runs). Everything else was ready in 164 s; the videos came after.
+
+| Class | Lessons | Video on the drive | As pages with their quiz (the child had a class code) | As videos alone (the child had none) |
+|---|---|---|---|---|
+| 1 | 112 | 806 MB | + 95 MB of quiz voices, 18.2 min | taken over, no download, 2.1 min |
+| 2 | 82 | 604 MB | + 86 MB, 17.1 min | taken over, 1.7 min |
+| 3 | 94 | 830 MB | + 108 MB, 29.9 min | taken over, 2.0 min |
+| 4 | 121 | 1.3 GB | + 149 MB, 49.3 min | taken over, 2.3 min |
+| 5 | 109 | 1.1 GB | not saved: the fault described below | 109 lessons saved in 5 min |
+| **1–5** | **518** | **4.6 GB** (5.2 GB with everything else) | 3.5 GB + 438 MB in 115 min for Classes 1 to 4 | |
+
+The quiz voices are what takes the time: about 70 small files a lesson, each fetched by itself (0.6 MB/s over the
+whole of Classes 1 to 4), where videos alone came at 3.7 MB/s (Class 5), and Nursery's 797 MB in 2.8 min with the
+page closed once and the network cut for 25 s in the middle. A school's line decides the rest.
+
+**All five classes, on every Chromebook** (operator, 18 Nov 2026). Unless a teacher has chosen otherwise, Get
+ready saves the lesson videos of Classes 1 to 5 (518 lessons, about 4.6 GB of video and 0.5 GB of quiz voices). It
+does so **after everything else**, so the home, the storybooks, the quizzes and the games are usable while the videos
+come in, one class after another, lowest first. The start page shows where it stands with real numbers
+("lesson videos — Class 3 (3 of 5): 41 of 94 lessons (362 MB of 829 MB)"), and a teacher can untick a class
+(`/cb?videos=1,2`, `all` or `none` does the same for a script; no `videos` is the page's own choice, Classes 1 to 5).
+
+- **It carries on.** Each lesson is recorded as it is saved and checked against the drive the next time, so a
+  Chromebook that was closed, or lost its Wi-Fi, takes up at the next lesson, not at the start of the class. With the
+  network gone it waits and goes on by itself.
+- **A class is saved whole or not at all.** Before a class is begun its real size is measured (see above) and the
+  browser is asked whether that much more will fit. If not, the start page says what the class needs and what there
+  is ("Class 4 needs 1.4 GB, this Chromebook has room for 780 MB"), nothing of that class is fetched, and the next
+  class is tried: as many classes as fit are saved. If the drive fills in the middle of a class all the same, what
+  was kept of **that** class is taken off again and no further class is begun. A lesson's page is kept only with
+  its video, so no saved page stands without one.
+- **"Is there room?" is asked of the browser, not read from its estimate.** `navigator.storage.estimate()` has
+  answered "what this site uses, plus 10 GB" on every device since Chrome 123, however full the drive is (so that no
+  site can read the size of a drive): on the rig it said "room for 10.7 GB more" with the site's real allowance cut
+  to 400 MB. The start page therefore asks by doing: it reserves the amount in the site's private files and gives
+  it straight back (`fits(bytes)`, in steps of 128 MB as Chrome hands room out). The header line reads
+  "… used, Chrome allows … more here".
+
+**Two kinds of lesson, and a child who changes kind** (found on the all-five-classes run, 18 Nov 2026). Classes 1
+to 4 were saved; then every lesson of Class 5 "could not be read" and none was saved. Read in Jugnu's code
+(`web-quiz-videos.js`, `web-quiz-hub.js`, `student-quiz.service.js`) and seen in its answers:
+
+- A child **with a class code** (they have played a quiz their teacher sent) gets a lesson as a **page**: the list
+  names it, or `POST /api/wq/videos/start` answers `{code, k}`; the page holds the video and its quiz.
+- A child **with none** gets the **video alone**: the start answers `{watch: {vid, url, poster, …}}`, the home plays it
+  in place, the lists name no page, and the quiz after it is made by the server only when the child taps for it.
+- Which one a child is can change under a saved class. Jugnu looks at the child's **18 newest quiz codes** for a
+  teacher-sent one. Each lesson page Get ready reads counts as a newer code, so the home child had a class code at
+  Class 1 and none by Class 5. (A real home child may have none from the start.)
+
+The step knew only the page. It also judged "is this lesson saved?" from today's list, so once the lists stopped
+naming pages it threw its record away (a class restored after a check came back "0 of 28"), and with no network a
+saved lesson said "This video needs the internet" after its door had been opened online once. Now:
+
+- **Either kind is saved.** With a page: the page, the video, its quiz clips. Alone: the video and its picture.
+- **Every saved lesson has a record on the drive** (`/__cb/watch/<vid>`: where its video is, its picture, its
+  name). "Is it here already?" is asked of the drive (record, video, page, clips), never of today's list: a class
+  that is whole stays whole, and is neither started nor downloaded again. A class saved by the step as it was before
+  is taken over without a download.
+- **With no network a saved lesson plays whichever way the list points.** The worker answers a start with Jugnu's
+  own earlier answer when that leads to a page on the drive, else with the record as `{watch}`; and a saved list is
+  given out naming only the lesson pages that are on the drive. With a network the server answers, untouched.
+
+Two things this leaves, both Jugnu's to change: the **quiz after a video alone** is not on the drive (the server
+makes it on the tap; with no network the child goes on to the next lesson), and **each lesson Get ready starts is
+counted by Jugnu as the child having started that video** (518 of them for five classes, once per Chromebook). A pack
+list per class (lesson → file, size, checksum, with links that can be fetched) would remove both.
+
+**A cache of their own.** With four classes on the drive the pilot's one cache held 15,979 files and Chrome would
+no longer list it ("Failed to execute 'keys' on 'Cache': Operation too large": a cache's list may not pass about
+10 MB; the deployed run's 14,062 files had just fitted). Every lane lists that cache (Get ready's audit, the
+storybooks' own check, a game's scoring with no network), so Get ready could never say "Ready" again. What is
+fetched from the media store through this site (lesson videos, their quiz clips, pictures: most of the files, by
+the thousand) is now kept in a second cache, `cb-media-v1`, which nothing needs to list; the main cache stays about
+the size it was. A file an earlier version put in the main cache still plays from there and is moved over when Get
+ready next looks at it. The audit finds each step's list by the step's name instead of listing the cache.
 
 **What Jugnu should change.** The pilot's route sends every video through one small service. For 40,000 Chromebooks
 that is the wrong road. Either of these lets each Chromebook fetch from Cloudflare directly, with no pilot server:
@@ -182,7 +255,67 @@ that is the wrong road. Either of these lets each Chromebook fetch from Cloudfla
 
 And a "pack" list per grade (lesson → file, size, checksum) so a device can ask for exactly what it lacks.
 
-## 6. Protected from clean-up
+## 6. What is not saved plays from the internet
+
+Operator, 18 Nov 2026: "If there is internet and content is not downloaded it should still play."
+
+**With a network.** Nothing waits for Get ready. A page, a list, a storybook's pictures and voices, a game and a
+quiz that are not on the drive are fetched from Jugnu as they are asked for (and kept as they arrive). A lesson
+video that is not on the drive is **streamed**: the worker passes the player's byte-range requests straight on to
+the media store with the lesson's own signed link, so the first picture comes in about a second and scrubbing
+works; the whole file is not downloaded and nothing is saved beside it (saving a video is Get ready's job, where
+its length can be checked).
+
+**With none.** What is saved plays. What is not says so in words a child can read, in the page's language, with
+Jugnu asleep, and never as a blank or a dead player:
+
+| What the child opened | What they see |
+|---|---|
+| A page that is not on the drive (a lesson, a game, a quiz never opened here) | The worker's own page: "This needs the internet" in English and Urdu, a **Home** button (the saved home) and **Try again**; it opens the page by itself when the network is back |
+| A door's list that is not on the drive (the videos of a class that was not saved) | The home stays whole; a card under the header says "This needs the internet · It is not saved on this Chromebook yet. Ask your teacher to turn on the Wi-Fi, or play something that is saved." |
+| A lesson whose page is on the drive and whose video is not (it was watched online once) | The player is covered by "This video needs the internet"; the questions under it stay |
+
+The words appear only when the network really is not there (the browser says so, or the worker's last request
+found none), and go away when it is back.
+
+## 7. After a deploy: the newer worker's takeover
+
+Found on the rig on 18 Nov 2026, when a full Get ready stopped at "the child home did not open".
+
+**What happens.** When the pilot has been deployed, a Chromebook's next page open (or its next Get ready, which
+registers the worker) makes Chrome fetch the changed worker file. The new worker installs and, as soon as the
+outgoing one is idle, takes over (`skipWaiting`). Shown with an instrumented worker:
+
+- a page **already being fetched** is waited for (held 4 s by the server: the new worker waited 4 s; the page opened);
+- a page asked for once the new worker is "activating" is kept for it, and opens;
+- a page asked for **in the moment between** (the outgoing worker stopped, the new one not yet in charge) is handed
+  to a fresh copy of the outgoing worker, and that copy is ended, unanswered, when the new one is in charge. A frame
+  stays blank; a tab stays on the page it was on, as if the tap had not happened. On the laptop the moment is short
+  (of taps placed 50 ms after the outgoing worker fell idle 2 in 30 were lost; of those placed 300 ms after, none
+  in 8), and it comes once per deploy per Chromebook. How long it is on a slow Chromebook is not known. Requests for
+  data in that moment were all answered (18 of 18).
+
+Get ready fell into it 4 runs in 7: it registers the worker, saves the app's files (the outgoing worker is busy,
+so the takeover waits), and the moment that is done it opens the home in a hidden frame.
+
+**What the pilot does.**
+
+- **Get ready waits.** After registering the worker it asks Chrome to look for a newer one and waits until that
+  one is in charge (30 s at most; with no network there is nothing to wait for). The log says "a newer version of
+  the offline worker was waiting: it is in charge now". On the rig (`rig/handover-check.mjs`): before, 2 of 4 Get-ready runs
+  after a changed worker file stopped at "the child home did not open"; after, 6 of 6 found the home.
+- **The home is opened a second time** if the frame came back without it, before the step gives up.
+- **A tap that was cut off is made again.** Every Jugnu page remembers where it was last asked to go (the browser's
+  navigation event; a door inside the page, a form and a link to another site are left alone). When a newer worker
+  has taken over and the page is still there 0.6 s later, it goes there again. On the rig (`rig/handover-check.mjs
+  --tap`): before, 2 of 30 taps in that moment left the page on the home for good; after, 40 of 40 opened the quiz
+  (the page went again 7 times; some of those would have opened late by themselves).
+
+Not covered: a page opened from nothing in that moment (a new tab, a bookmark) has no page to go again from. A
+reload opens it. Removing the moment itself means the worker not taking over until every page is closed (no
+`skipWaiting`), which would hold a deployed fix back until each Chromebook's browser was next closed.
+
+## 8. Protected from clean-up
 
 **The risk.** When a device's drive runs low, Chrome clears the saved files of sites it does not count as
 important, a whole site at a time. After Get ready that is 1.4 GB on a Chromebook. A site that holds *persistent
