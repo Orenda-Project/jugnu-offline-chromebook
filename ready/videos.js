@@ -163,7 +163,7 @@
         if (m) {
           v.m = m;
           var sz = await ctx.ask({ type: 'size', urls: m.video.slice(0, 1) }, 90000);
-          if (Array.isArray(sz) && sz[0]) { v.bytes = sz[0].bytes; v.onDrive = !!sz[0].kept; }
+          if (Array.isArray(sz) && sz[0]) { v.bytes = sz[0].bytes; v.onDrive = !!sz[0].kept; v.wasOnDrive = v.onDrive; }
         }
         tick('measuring lessons');
       });
@@ -277,10 +277,12 @@
       }
       record(); ctx.note('cb-videos', summary);
       if (have.length < lessons.length) problems.push(name + ': ' + (lessons.length - have.length) + ' of ' + lessons.length + ' lessons not saved yet');
-      var fetchedNow = left.filter(function (v) { return have.indexOf(v.vid) >= 0; }).length;
+      var gotNow = left.filter(function (v) { return have.indexOf(v.vid) >= 0; });
+      var fetchedNow = gotNow.filter(function (v) { return !v.wasOnDrive; }).length, takenOver = gotNow.length - fetchedNow;
       var mins = Math.round((Date.now() - began) / 6000) / 10;
       ctx.log('lesson videos, ' + name + ': ' + have.length + ' of ' + lessons.length + ' lessons on this Chromebook (' + mb(summary[g].mb) + ' of video, ' + mb(summary[g].clips_mb) + ' of quiz voices)' +
-        (fetchedNow ? '; ' + fetchedNow + ' saved now in ' + mins + ' min' : have.length === lessons.length ? '; all were here already' : ''));
+        (fetchedNow ? '; ' + fetchedNow + ' saved now in ' + mins + ' min' : '') + (takenOver ? '; ' + takenOver + ' were on the drive already and were taken over' : '') +
+        (!gotNow.length && have.length === lessons.length ? '; all were here already' : ''));
     }
     if (problems.length) throw new Error(problems.join('; '));
     return want.map(function (g) { return 'Class ' + g + ': ' + summary[g].saved + ' lessons, ' + mb(summary[g].mb); }).join('; ');

@@ -59,6 +59,7 @@ test('saved by the step as it was before (videos and pages on the drive, no reco
   assert.equal(r.json('cb-videos')['1'].saved, 3);
   assert.equal(r.records.size, 3, 'each now has its record');
   assert.equal(r.starts.length, 3, 'each was started once, to learn where its video is');
+  assert.ok(r.logs.some((l) => /Class 1: 3 of 3 lessons on this Chromebook .*; 3 were on the drive already and were taken over/.test(l) && !/saved now/.test(l)), r.logs.join(' | '));
 });
 
 test('nothing could be saved: the log does not say "all were here already"', async () => {
