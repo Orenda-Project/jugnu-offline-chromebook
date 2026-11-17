@@ -46,6 +46,9 @@
   function keepEvent(ev) {
     try {
       ev.key = localStorage.getItem('cb-key') || ''; ev.device = localStorage.getItem('cb-device') || ''; ev.at = new Date().toISOString();
+      // Jugnu's own id for this browser (quiz_sessions.device_ref and every run row carry it): with it, what was
+      // played on this Chromebook between two picks can be joined to the child who was picked (lane/home).
+      try { ev.wq_device = JSON.parse(localStorage.getItem('wq_d') || 'null') || null; } catch (e2) { ev.wq_device = null; }
       var list = events(); list.push(ev); localStorage.setItem('cb-events', JSON.stringify(list));
     } catch (e) { /* storage off */ }
     sendEvents();
@@ -65,6 +68,28 @@
     }, function () { sending = false; });
   }
   setTimeout(sendEvents, 2000);
+
+  /* Which quiz session this is, so the record of who played names the very row in Jugnu's database: the session id
+   * inside Jugnu's own session token (wq_s_<code>.st), or, for a quiz started on the device with no network, the
+   * local id the worker later reports beside the real session id when it syncs ({synced:{lsid, session_id}}). */
+  function sessionOf(code) {
+    try {
+      var st = (JSON.parse(localStorage.getItem('wq_s_' + code) || 'null') || {}).st || '';
+      if (st.indexOf('cblocal.') === 0) return { local_session: st.slice(8) };
+      var p = JSON.parse(atob(st.slice(0, st.indexOf('.')).replace(/-/g, '+').replace(/_/g, '/')));
+      return p && p.sid ? { session_id: p.sid } : {};
+    } catch (e) { return {}; }
+  }
+  // Home, Stories, Games and Videos are played as this Chromebook's one home child; the picked child is recorded here
+  // each time the home (or a game) opens, with Jugnu's device id, so that activity can be joined to them by time.
+  function homeOpened() {
+    var kid = null;
+    try { kid = JSON.parse(localStorage.getItem('cb-child') || 'null'); } catch (e) { return; }
+    if (!kid || !kid.name || !/^\/(h|c)\//.test(location.pathname)) return;
+    keepEvent({ event: location.pathname.charAt(1) === 'h' ? 'home_open' : 'game_open', student_id: kid.student_id || null, local_id: kid.local_id || null,
+      name: kid.name, grade: kid.grade, section: kid.section, school_id: kid.school_id, added: !!kid.added });
+  }
+  document.addEventListener('DOMContentLoaded', homeOpened);
 
   function autoWho() {
     var kid = null;
@@ -104,8 +129,9 @@
       if (m === 'M4-notfound' && !done[m]) { tap(el('wq-force')); return; }
       if (m === 'M6' && !done.started) {
         done.started = 1;
-        keepEvent({ event: 'quiz_start', code: location.pathname.split('/')[2], student_id: kid.student_id || null, local_id: kid.local_id || null,
-          name: kid.name, grade: kid.grade, section: kid.section, school_id: kid.school_id, added: !!kid.added });
+        var code = location.pathname.split('/')[2];
+        keepEvent(Object.assign({ event: 'quiz_start', code: code, student_id: kid.student_id || null, local_id: kid.local_id || null,
+          name: kid.name, grade: kid.grade, section: kid.section, school_id: kid.school_id, added: !!kid.added }, sessionOf(code)));
       }
     };
     new MutationObserver(function () { setTimeout(act, 250); }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['data-m'], childList: true });
