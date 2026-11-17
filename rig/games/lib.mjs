@@ -16,7 +16,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.join(HERE, '..', '..');
 export const BASE = process.env.CB_BASE || 'http://localhost:8812';
 export const SHOTS = path.join(ROOT, 'shots');
-export const FLAG = path.join(ROOT, 'OFFLINE');
+export const FLAG = process.env.CB_OFFLINE_FLAG || path.join(ROOT, 'OFFLINE'); // a second server on this machine has its own switch (its OFFLINE_FLAG)
 export const UA = 'Mozilla/5.0 (X11; CrOS x86_64 16328.55.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 fs.mkdirSync(SHOTS, { recursive: true });
 
