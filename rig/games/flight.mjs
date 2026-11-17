@@ -153,8 +153,11 @@ export async function playPart(page, opts = {}) {
           return k ? click(page, k) : null;
         }
         case 'mic_check': {
+          // tap the microphone, say something (the rig's microphone is speaking), hear it back, "I heard myself"
           const mic = usable(s.mic)[0];
           if (mic) return click(page, mic);
+          const yes = usable(s.opts).find((c) => /sae-choice/.test(c.cls));
+          if (yes) return click(page, yes);
           return prim ? click(page, prim) : null;
         }
         case 'oral_practice': {
@@ -242,9 +245,14 @@ export async function playPart(page, opts = {}) {
 
 /** The last screen's button: back to the sea map, which shows the part's card. */
 export async function backToMap(page, { waitMs = 30000 } = {}) {
-  const s = await look(page);
-  const b = s && (usable(s.primary)[0] || usable(s.secondary)[0]);
-  if (b) await click(page, b);
+  // the last screen's one button; when it is below the page the child scrolls to it, and so does the rig
+  for (let i = 0; i < 8; i += 1) {
+    const s = await look(page);
+    const b = s && (usable(s.primary)[0] || usable(s.secondary)[0]);
+    if (!b) { await page.waitForTimeout(500); continue; }
+    viewH = s.h; where = 'battery_end';
+    if ((await click(page, b)) === 'clicked') break;
+  }
   const ok = await page.waitForURL(/\/sa-game\//, { timeout: waitMs }).then(() => true, () => false);
   if (!ok) return { back: false, text: await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').slice(0, 200)).catch(() => '') };
   await page.waitForSelector('#sg-card, .sg-map', { timeout: 20000 }).catch(() => {});

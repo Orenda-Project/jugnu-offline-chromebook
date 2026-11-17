@@ -43,6 +43,53 @@ The school's class list is loaded once by Get ready and kept on the device, so a
 **first names and roll numbers only** (no family names, phones or dates of birth), and the server gives it only to a
 Chromebook that has the **device key**, which the Chromebook receives once from its setup link (`/cb?key=…`).
 
+## The learning games (17 Nov 2026)
+
+What a child reaches behind the home's **Games** door, in every grade and in English and Urdu
+(`rig/games/inventory.mjs`, ten test children, one per grade and language):
+
+| Grade | Games |
+|---|---|
+| 1 | **Numbers with Jugnu** (how many dots) · **Jugnu's big flight** · three video quizzes ("Try these next") |
+| 2–5 | **Number warm-up** (the missing number) · **Which is bigger?** · **Read along** · **Read aloud** · **Listen** · **Jugnu's big flight** · three video quizzes |
+
+**Jugnu's big flight** is the reading and number battery (EGRA/EGMA) as a game, and it holds the three games people ask
+for by name: **Urdu Island** is the Urdu reading game (9 stones: listening, vocabulary pictures, first sounds, letters,
+made-up words, words, a story read aloud and its questions), **English Island** the English reading game (11 stones,
+spelling included), **Numbers Island** the maths game (14 stones; 15 in Grades 4–5), then the **Big flight** through
+20 stones. There are three batteries (Grade 1, Grades 2–3, Grades 4–5), each in English and Urdu: six files that name
+1,030 clips and pictures. The door's grade picker ("All grades") also opens the other grades' number games.
+
+What the pilot does for them:
+
+- **Get ready keeps all of it** (`ready/games.js`): all six batteries, every clip and picture they name (the list is
+  the battery engine's own, never a copy that can drift), the engine, the sea map in both languages, and every
+  Challenge game behind the door with the clips it names. It ends by asking the worker which files are *not* on the
+  device and prints the count ("6 of 6 batteries, 1030 clips and pictures, 0 not saved"). Before, it kept the Grade 1
+  battery only, no battery picture, and nothing of the Grades 2–5 number games.
+- **One offline worker.** Jugnu's battery has a worker of its own (scope `/sa/`); under the pilot it took those pages
+  away from the pilot's worker, so a part started with no network had no way back to the map and nothing it could ever
+  send. The proxy now serves a stand-in at `/sa/sw.js` that removes that worker, and `pilot-sw.js` (its GAMES LANE
+  block) answers the engine's "keep these / are these kept" itself, so Jugnu speaks with its recorded clips.
+- **A part started offline is sent later.** It gets a run on the device; when the engine next sends answers or a
+  recording and there is a network, the real run is opened with the request kept from the start. A hidden frame
+  (`sa-drain.html`, started by `boot.js` on any page) runs the engine's own upload queue as soon as the network is
+  back: nobody presses anything.
+- **The Challenge's number games and Read aloud with no network**: the taps, or the recording, wait on the device and
+  the page shows its end card; back online they go to the run they were played in, or, when its two-hour token has
+  lapsed, to a fresh serve of the *same* questions or story. Other questions: nothing is sent, and the outbox says so.
+- **A recording's upload goes through the pilot's server** (`/__cb/r2put`): Jugnu's storage bucket accepts a browser's
+  upload only from Jugnu's own site, so through the pilot every reading's upload was refused (also on the deployed
+  pilot).
+- **The Chromebook's keyboard types** into Jugnu's number pads and letter strip (digits, letters, Backspace, Enter);
+  Jugnu's screens take no key at all.
+- **The battery's screens fit a 1366×633 page** (`cb-fit.css`, added to `/sa/play.html`): Jugnu sizes any screen 600 px
+  or wider as a tall tablet, so the second row of answers and the keypad's 0 sat below the page.
+
+Test it: `node rig/games/matrix.mjs online <children>` and `… offline <children>` (each child in its own Chrome
+profile; offline = Get ready, then the server's OFFLINE switch and every browser offline, then the network back and
+only watching). `npm test` runs the worker's rules in node (`test/pilot-sw.test.mjs`).
+
 ## How it works
 
 ```

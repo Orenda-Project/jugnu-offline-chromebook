@@ -28,4 +28,11 @@
   .sae.is-r8-layout .sae-star{min-height:88px}
   .sae.is-r8-layout .sae-more{min-height:56px;font-size:21px}
   .sae.is-r8-layout .sae-onecell{height:clamp(200px,40vh,640px)}
+  /* five answers (letters, sounds): three and two, not two, two and one below the page */
+  .sae.is-r8-layout .sae-opts.is-five{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .sae.is-r8-layout .sae-opts.is-five .sae-opt:last-child{grid-column:auto}
+  /* the last screen: its one button ("Go back") on the page; the space under it is the coach page's bar, not the game's */
+  .sae.is-r8-layout .sae-end .sae-jugnu{width:88px;height:88px}
+  .sae.is-r8-layout[data-mode=game] .sae-end.is-r8-endfit{padding-bottom:12px}
+  .sae.is-r8-layout .sae-kpwarm .sae-kpw-typed{min-height:48px;font-size:34px}
 }
