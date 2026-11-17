@@ -337,7 +337,12 @@
         return rows.reduce(function (p, row) {
           return p.then(function (stop) {
             if (stop) return stop;
-            return post('/api/wq/lr/key', { st: tokenOf(ev.url), kid: ev.kid, book: ev.book, page: ev.page, lang: row.lang }).then(function (k) {
+            var ask = function (st) { return post('/api/wq/lr/key', { st: st, kid: ev.kid, book: ev.book, page: ev.page, lang: row.lang }); };
+            var hub = null; try { hub = localStorage.getItem('cb-hub'); } catch (e) { /* none */ }
+            return ask(tokenOf(ev.url)).then(function (k) {
+              // the link this was read under is no longer taken: this Chromebook's present home link, once
+              return (k.status === 401 || k.status === 403 || k.status === 410) && hub && hub !== tokenOf(ev.url) ? ask(hub) : k;
+            }).then(function (k) {
               if (!k.ok || !k.body.api_key || !/^wss:\/\//.test(String(k.body.ws || ''))) {
                 var why = k.body.error === 'enough_for_today' ? 'rest' : k.status === 401 || k.status === 403 || k.status === 410 ? 'link' : k.status === 404 ? 'not_here' : 'offline';
                 return { wait: why, status: k.status };
@@ -374,7 +379,12 @@
         return p.then(function () {
           var k = ev.kid + '|' + ev.book;
           if (stopAll || held[k]) return null;
-          var ready = ev.recs ? scored(ev) : Promise.resolve({ body: ev.body });
+          // Jugnu's "enough readings for today" (a child's 40 pages, or the whole service's day): asked again in half an hour, not every sync
+          var rest = 0; try { rest = Number(localStorage.getItem('cb-stories-rest')) || 0; } catch (e) { /* none */ }
+          var ready = !ev.recs ? Promise.resolve({ body: ev.body }) : Date.now() < rest ? Promise.resolve({ wait: 'rest' }) : scored(ev).then(function (x) {
+            if (x.wait === 'rest') { try { localStorage.setItem('cb-stories-rest', String(Date.now() + 30 * 60000)); } catch (e) { /* asked again next time */ } }
+            return x;
+          });
           return ready.then(function (s) {
             var gone = function () { return del('ev', ev.id).then(function () { return Promise.all((ev.recs || []).map(function (id) { return del('rec', id); })); }); };
             if (s.drop) { dropped.push({ event: ev.event, book: ev.book, page: ev.page, why: s.drop }); return gone(); }

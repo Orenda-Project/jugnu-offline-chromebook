@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { launch, shot, BASE } from './cb.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FLAG = path.join(HERE, '..', 'OFFLINE');
+const FLAG = process.env.CB_OFFLINE_FLAG || path.join(HERE, '..', 'OFFLINE');   // the server's switch (its OFFLINE_FLAG)
 const argv = process.argv.slice(2);
 const VALUED = ['lang', 'grade', 'books', 'pages', 'turn', 'json'];
 const flag = (n, d) => { const i = argv.indexOf('--' + n); return i < 0 ? d : (VALUED.includes(n) ? argv[i + 1] : true); };
@@ -68,12 +68,15 @@ await ctx.addInitScript((turn) => {
       // a quiet room before and after the words: the stream never runs dry (a real microphone never does)
       const room = ac.createConstantSource(); const hush = ac.createGain(); hush.gain.value = 0.0001; room.connect(hush); hush.connect(dest); room.start();
       const url = window.__cbSpeech;
-      if (url) {
-        const buf = await fetch(url).then((r) => r.arrayBuffer()).then((b) => ac.decodeAudioData(b));
+      const buf = url ? await fetch(url).then((r) => r.arrayBuffer()).then((b) => ac.decodeAudioData(b)) : null;
+      // the child reads the part of the page that is on screen: __cbSay(from ms, to ms) plays that stretch of the voice
+      window.__cbSay = (from, to) => {
+        if (!buf) return false;
         const src = ac.createBufferSource();
-        src.buffer = buf; src.connect(dest); src.start(ac.currentTime + 0.9);
-      }
-      window.__cbSpoke = url || null;
+        src.buffer = buf; src.connect(dest);
+        src.start(ac.currentTime + 0.7, Math.max(0, from / 1000), to > from ? (to - from) / 1000 : undefined);
+        return true;
+      };
       return dest.stream;
     };
   }
@@ -205,23 +208,38 @@ try {
         else {
           if (v.screen === 'story-mic') await tap('.lr-go');
           const reading = await until(async () => { const x = await view(); return x.screen === 'story-read' ? x : (x.screen === 'story-page' ? x : null); }, 10000);
-          let peak = ''; const t0 = Date.now(); let res = null; let tappedDone = false;
-          const limit = (p.audio.ms || 4000) + 26000;
+          let peak = ''; const t0 = Date.now(); let res = null; let tappedDone = false; let part = 0; let partAt = t0; let partMs = p.audio.ms || 4000;
+          // a long page is read in parts (Jugnu's own split): the child reads the part on screen, then the next
+          const parts = await page.evaluate((pg) => { try { return window.WQSTORIES._chunks(pg, window.WQSTORIES._lines(pg)); } catch (e) { return null; } }, p) || [[0, R.words - 1]];
+          const limit = (p.audio.ms || 4000) + 26000 + parts.length * 12000;
           while (reading && Date.now() - t0 < limit) {
             const x = await view();
             if (x.screen === 'story-read') {
+              if (TURN === 'voice') {
+                // a new part on screen: its own words into the microphone
+                const no = await page.evaluate(() => { const el = document.querySelector('[data-lr] .lr'); if (!el) return 0; if (!el.__cbNo) { window.__cbParts = (window.__cbParts || 0) + 1; el.__cbNo = window.__cbParts; } return el.__cbNo; });
+                if (no > part) {
+                  const k = Math.min(parts.length - 1, part); part = no;
+                  const w0 = p.words[parts[k][0]], w1 = p.words[parts[k][1]];
+                  const from = parts.length > 1 ? Math.max(0, w0.s_ms - 150) : 0, to = parts.length > 1 ? w1.e_ms + 350 : 0;
+                  partMs = to > from ? to - from : (p.audio.ms || 4000); partAt = Date.now();
+                  await page.evaluate(([a, b]) => window.__cbSay && window.__cbSay(a, b), [from, to]);
+                }
+              }
               if (x.lr && (x.lr.match(/[rh]/g) || []).length >= (peak.match(/[rh]/g) || []).length) peak = x.lr;
-              // a child who has finished reading and sees no page turn taps "I'm done"
-              if (!tappedDone && Date.now() - t0 > (p.audio.ms || 4000) + 9000) { tappedDone = true; await tap('[data-screen="story-read"] .wqs-done'); }
+              // a child who has finished reading the part and sees nothing happen taps "I'm done"
+              if (!tappedDone && Date.now() - partAt > partMs + 11000) { tappedDone = true; await tap('[data-screen="story-read"] .wqs-done'); }
             } else if (x.screen === 'story-page') { res = x; break; }
             await sleep(200);
           }
+          await page.evaluate(() => { window.__cbParts = 0; });
           await sleep(500);
           const after = res ? await view() : null;
-          const ev = net.slice(k0).filter((e) => e.kind === 'event' && e.event === 'story_page_read').slice(-1)[0] || null;
+          // the page's "page read" step and the server's answer to it (a slow answer is waited for)
+          const ev = res ? await until(async () => net.slice(k0).filter((e) => e.kind === 'event' && e.event === 'story_page_read').slice(-1)[0] || null, 8000, 250) : null;
           const keys = net.slice(k0).filter((e) => e.kind === 'key');
           const sock = ws.slice(w0);
-          R.turn = { via: viaMain ? 'main' : 'second button', key: keys.map((k) => k.status + (k.local ? ' local' : '')).join(',') || 'none', socket: sock.map((s) => `${s.sent} sent/${s.got} got`).join(',') || 'none', lit: peak, done_tap: tappedDone, said: after ? after.extra : null,
+          R.turn = { parts: parts.length, parts_read: part, via: viaMain ? 'main' : 'second button', key: keys.map((k) => k.status + (k.local ? ' local' : '')).join(',') || 'none', socket: sock.map((s) => `${s.sent} sent/${s.got} got`).join(',') || 'none', lit: peak, done_tap: tappedDone, said: after ? after.extra : null,
             event: ev ? { status: ev.status, local: ev.local, ...ev.data } : null };
           R.turn.ok = !!(after && ev && ev.status === 200 && (offline ? true : ev.data && ev.data.words_read > 0));
           if (!R.turn.ok) B.problems.push(`p${p.n}: Your turn ${JSON.stringify(R.turn).slice(0, 400)}`);
@@ -282,7 +300,7 @@ try {
     if (T.length) say(`   Your turn: ${T.filter((r) => r.turn.ok).length}/${T.length} pages answered — ${T.map((r) => `p${r.n} ${r.turn.event ? (r.turn.event.words_read != null ? r.turn.event.words_read + '/' + r.turn.event.words_total : 'saved') : 'no result'}${r.turn.event && r.turn.event.local ? ' (kept)' : ''}`).join(', ')}`);
     if (T.length) say(`   said after reading: ${[...new Set(T.map((r) => r.turn.said).filter(Boolean))].slice(0, 3).join(' | ')}`);
     if (B.questions.length) say(`   questions: ${B.questions.length} — ${B.questions.map((q) => `q${q.n} picks ${q.picks.join('>')}${q.look_back ? ' look-back' : ''}${q.shown ? ' shown' : ''} [${q.answers.join('; ')}]`).join(' · ')}`);
-    say(`   done screen: ${B.done || 'NO'}`);
+    say(`   done screen: ${B.done || (B.questions_skipped ? 'not asked for (--no-questions)' : 'NO')}`);
     say(`   to the server: ${B.events.join(' · ') || 'nothing'}`);
     if (B.problems.length) say(`   PROBLEMS:\n     - ${B.problems.join('\n     - ')}`);
   }
