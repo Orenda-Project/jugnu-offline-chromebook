@@ -90,7 +90,9 @@ function networkFirst(req, key) {
       if (res.status >= 500) {
         return kept(key).then(function (hit) { if (!done) { done = true; clearTimeout(timer); resolve(hit || res); } });
       }
-      keep(key, res);
+      // VIDEOS (lane/home): a page read only to find what it names (X-CB-Keep: no) is not kept; a lesson's page is kept
+      // with its video, so no saved page stands without one.
+      if (req.headers.get('X-CB-Keep') !== 'no') keep(key, res);
       if (!done) { done = true; clearTimeout(timer); resolve(res); }
     }, function () {
       if (done) return;
@@ -669,6 +671,18 @@ function readyMessage(d, port, e) {
   if (d.type === 'audit') { e.waitUntil(audit().then(reply, function () { reply(null); })); return true; }
   if (d.type === 'have' && Array.isArray(d.urls)) {
     e.waitUntil(caches.open(KEEP).then(function (c) { return Promise.all(d.urls.map(function (u) { return has(c, u).catch(function () { return false; }); })); }).then(reply, function () { reply(null); }));
+    return true;
+  }
+  // take files off the drive: our own by their exact address, another site's by its address without the signature.
+  // Answers how many were there. (A class of lesson videos that turned out not to fit is not left half-saved.)
+  if (d.type === 'drop' && Array.isArray(d.urls)) {
+    e.waitUntil(caches.open(KEEP).then(function (c) {
+      return Promise.all(d.urls.map(function (u) {
+        var key;
+        try { key = new URL(u).origin === self.location.origin ? homeKey(u) : videoKeyOf(u); } catch (err) { return false; }
+        return c.delete(key);
+      }));
+    }).then(function (done) { keptN = null; reply(done.filter(Boolean).length); }, function () { reply(null); }));
     return true;
   }
   // how big each media file is, on the drive or on the server (videoSize); eight at a time

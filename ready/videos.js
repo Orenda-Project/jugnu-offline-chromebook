@@ -16,6 +16,9 @@
   var LANGS = ['en', 'ur'];
   var RESERVE = 300e6; // left free on the drive whatever happens
   var CLIPS = 1.3e6;   // a lesson's ~90 quiz voice clips and its page: 1.05 MB a lesson measured on Class 2, with a margin
+  // Which classes, when no teacher has chosen (operator, 18 Nov 2026): every Chromebook keeps the lesson videos of
+  // Classes 1 to 5, about 4.6 GB, saved after everything else. A teacher can untick a class on the start page.
+  var DEFAULT = ['1', '2', '3', '4', '5'];
   var MEDIA = /https?:\/\/[^"'\s\\<>]+?\.(mp4|webm|m4v|mov|mp3|m4a|ogg|opus|wav|webp|png|jpe?g)(?:\?[^"'\s\\<>]*)?/g;
   var lsJson = function (k, d) { try { var v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; } catch (e) { return d; } };
   var mb = function (n) { return n >= 1000 ? (n / 1000).toFixed(1) + ' GB' : Math.round(n) + ' MB'; };
@@ -65,21 +68,26 @@
     var own = String(top.grade);
     var grades = (top.grades || []).map(function (x) { return String(x.g); });
     ctx.note('cb-home-grade', own);
-    if (!lsJson('cb-video-all', []).length) ctx.note('cb-video-all', grades); // no class list on this Chromebook: every grade can be ticked
+    ctx.note('cb-video-all', grades); // every class Jugnu has lessons for can be ticked on the start page
     // Every class's lesson count, for the ticks on the start page. Its size is written only once it has been
     // MEASURED (below): Jugnu's lists carry a size just for lessons it happened to look at lately, so a class can
     // come with none at all, and a size that is not there must never be shown, or counted, as 0.
     var sizes = lsJson('cb-video-sizes', {}), summary = lsJson('cb-videos', {}), problems = [];
     (top.grades || []).forEach(function (x) { var g = String(x.g), had = sizes[g]; sizes[g] = had && had.measured ? { n: x.n, mb: had.mb, measured: true } : { n: x.n }; });
     ctx.note('cb-video-sizes', sizes);
-    var want = ctx.videoGrades().map(String).filter(function (g) { return grades.indexOf(g) >= 0; });
+    var chosen = ctx.videoGrades(); // null: no teacher has chosen
+    var want = (chosen == null ? DEFAULT : chosen.map(String)).filter(function (g) { return grades.indexOf(g) >= 0; });
     if (!want.length) return 'no class ticked';
     var quiet = { each: function () {} };
-    var page = function (v) { return fetch(pageUrl(v)).then(function (r) { return r.ok ? r.text() : ''; }, function () { return ''; }); };
+    // A lesson's page read only to find its video is not kept (X-CB-Keep: no): a page is kept WITH its video, so a
+    // class that turns out not to fit leaves no pages behind, and no saved page ever stands without its video.
+    var page = function (v) { return fetch(pageUrl(v), { headers: { 'X-CB-Keep': 'no' } }).then(function (r) { return r.ok ? r.text() : ''; }, function () { return ''; }); };
 
     for (var gi = 0; gi < want.length; gi += 1) {
       var g = want[gi];
-      var label = 'Class ' + g;
+      var began = Date.now();
+      var name = 'Class ' + g;
+      var label = name + (want.length > 1 ? ' (' + (gi + 1) + ' of ' + want.length + ')' : '');
       ctx.setPct(null, label + ': reading the lists…');
       // 1. the lists
       var subjects = ((await json(libUrl(ctx.hub, ctx.kid, 'en', g))).subjects || []).map(function (s) { return s.key; });
@@ -135,7 +143,7 @@
       var total = sum(lessons, function (v) { return v.bytes; });
       sizes[g] = unread ? { n: lessons.length, mb: Math.round(total / 1e6) } : { n: lessons.length, mb: Math.round(total / 1e6), measured: true };
       ctx.note('cb-video-sizes', sizes);
-      if (unread) ctx.log('lesson videos, ' + label + ': the length of ' + unread + ' of ' + lessons.length + ' videos could not be read; their size is an estimate');
+      if (unread) ctx.log('lesson videos, ' + name + ': the length of ' + unread + ' of ' + lessons.length + ' videos could not be read; their size is an estimate');
       var keptOf = function () { return { video: sum(lessons, function (v) { return have.indexOf(v.vid) >= 0 ? v.bytes : 0; }), clips: sum(lessons, function (v) { return have.indexOf(v.vid) >= 0 ? v.clipBytes : 0; }) }; };
       var record = function (why) {
         var k = keptOf();
@@ -153,9 +161,10 @@
       var fit = left.length && typeof ctx.fits === 'function' ? await ctx.fits(need) : null;
       var room = sp.room != null ? sp.room : sp.free;
       if (left.length && (fit === false || (fit == null && sp.free != null && need > sp.free))) {
-        problems.push(label + ' needs ' + mb(need / 1e6) + ', this Chromebook has room for ' + mb(room / 1e6));
+        // Not started: nothing of a class that does not fit is fetched. The next class may be smaller and fit.
+        problems.push(name + ' needs ' + mb(need / 1e6) + ', this Chromebook has room for ' + mb(room / 1e6));
         record('no room'); ctx.note('cb-videos', summary);
-        ctx.log('lesson videos, ' + label + ': not saved: it needs ' + mb(need / 1e6) + ' (' + left.length + ' lessons, ' + mb(sum(left, function (v) { return v.bytes; }) / 1e6) + ' of video) and this Chromebook has room for ' + mb(room / 1e6));
+        ctx.log('lesson videos, ' + name + ': not saved: it needs ' + mb(need / 1e6) + ' (' + left.length + ' lessons, ' + mb(sum(left, function (v) { return v.bytes; }) / 1e6) + ' of video) and this Chromebook has room for ' + mb(room / 1e6));
         continue;
       }
       // 6. lesson by lesson (three at a time): its page, its video, its pictures, its quiz clips
@@ -196,10 +205,26 @@
         }
         said();
       });
-      if (ctx.isFull()) problems.push(label + ': the drive filled up after ' + have.length + ' lessons');
+      if (ctx.isFull()) {
+        // The drive itself refused a write, though the browser had said the class would fit (a page cannot see how
+        // full the drive is). A class is kept whole or not at all: what was kept of this one is taken off again, and
+        // no further class is started.
+        var gone = [];
+        lessons.forEach(function (v) { if (v.m) gone = gone.concat([ctx.abs(pageUrl(v))], v.m.video, v.m.clips); });
+        if (typeof ctx.forget === 'function') await ctx.forget(gone);
+        have = [];
+        localStorage.setItem('cb-videos-' + g, '[]');
+        record('no room'); ctx.note('cb-videos', summary);
+        problems.push(name + ': the drive filled up; nothing of ' + name + ' is kept');
+        ctx.log('lesson videos, ' + name + ': the drive filled up while saving it; what was saved of it has been taken off again');
+        break;
+      }
       record(); ctx.note('cb-videos', summary);
-      if (have.length < lessons.length && !ctx.isFull()) problems.push(label + ': ' + (lessons.length - have.length) + ' of ' + lessons.length + ' lessons not saved yet');
-      ctx.log('lesson videos, ' + label + ': ' + have.length + ' of ' + lessons.length + ' lessons on this Chromebook (' + mb(summary[g].mb) + ' of video, ' + mb(summary[g].clips_mb) + ' of quiz voices)');
+      if (have.length < lessons.length) problems.push(name + ': ' + (lessons.length - have.length) + ' of ' + lessons.length + ' lessons not saved yet');
+      var fetchedNow = left.filter(function (v) { return have.indexOf(v.vid) >= 0; }).length;
+      var mins = Math.round((Date.now() - began) / 6000) / 10;
+      ctx.log('lesson videos, ' + name + ': ' + have.length + ' of ' + lessons.length + ' lessons on this Chromebook (' + mb(summary[g].mb) + ' of video, ' + mb(summary[g].clips_mb) + ' of quiz voices)' +
+        (fetchedNow ? '; ' + fetchedNow + ' saved now in ' + mins + ' min' : '; all were here already'));
     }
     if (problems.length) throw new Error(problems.join('; '));
     return want.map(function (g) { return 'Class ' + g + ': ' + summary[g].saved + ' lessons, ' + mb(summary[g].mb); }).join('; ');

@@ -279,7 +279,13 @@
   var steps = [];                   // [{id, name, run, late, check, el}]
   var cur = null;                   // the step running now
   var full = false;                 // the drive ran out of room
-  function loadRun() { var r = lsJson(RUN_KEY, null); return r && r.v === 2 && Date.now() - r.at < RUN_MAX_AGE_MS ? r : { v: 2, at: Date.now(), done: {}, ctx: {} }; }
+  function loadRun() {
+    var r = lsJson(RUN_KEY, null);
+    if (r && r.v === 2 && Date.now() - r.at < RUN_MAX_AGE_MS) return r;
+    // An older run starts from the top. If it was cut short (the Chromebook was closed in the middle, say over a
+    // weekend with the lesson videos half-way), that is carried over: this page then carries on by itself.
+    return { v: 2, at: Date.now(), done: {}, ctx: {}, running: !!(r && r.v === 2 && r.running) };
+  }
   var run = loadRun();
   function saveRun() { ls(RUN_KEY, JSON.stringify(run)); }
 
@@ -354,6 +360,13 @@
       return ask({ type: 'expect', step: step ? step.id : 'other', urls: out.gone, drop: true }, 20000).then(function () { return out; });
     });
   }
+  /** Take files off the drive again, and off the list of what the running step means to have there. */
+  function forget(urls) {
+    var step = cur;
+    return ask({ type: 'drop', urls: urls }, 120000).then(function (n) {
+      return ask({ type: 'expect', step: step ? step.id : 'other', urls: urls, drop: true }, 20000).then(function () { return n; });
+    });
+  }
   function frame(src, ms) {
     return new Promise(function (ok) {
       var f = document.createElement('iframe'); f.className = 'warm'; f.src = src;
@@ -366,18 +379,18 @@
   function text(u) { return fetch(u).then(function (r) { return r.text(); }); }
 
   /* ---------------- lesson videos: which classes ---------------- */
-  // The classes on this Chromebook's class list, else the home child's class. The home child's class and the picked
-  // child's class are ticked to begin with; a teacher ticks the others (each line says how big it is once known).
+  // Which classes' lesson videos this Chromebook keeps. Operator, 18 Nov 2026: Classes 1 to 5 on every Chromebook
+  // (about 4.6 GB, saved after everything else), until a teacher unticks one. videoGrades() is the teacher's own
+  // choice, or null when none was made (the lesson-videos step then takes Classes 1 to 5 of what Jugnu lists).
+  function videoDefault(all) {
+    return (all || []).map(String).filter(function (g) { return /^[1-5]$/.test(g); });
+  }
   function videoGrades() {
     var v = ls('cb-video-grades');
     if (v === 'none') return [];
-    var all = lsJson('cb-video-all', []);
-    if (v === 'all') return all.slice();
+    if (v === 'all') return lsJson('cb-video-all', []).map(String);
     if (v) return v.split(',').map(function (g) { return g.trim(); }).filter(Boolean);
-    var own = []; var hg = ls('cb-home-grade'); var c = child();
-    if (hg) own.push(String(hg));
-    if (c && c.grade && own.indexOf(String(c.grade)) < 0) own.push(String(c.grade));
-    return own;
+    return null;
   }
   /** What stands beside a class's tick: its lessons, its size only when it is known (a size that was never measured
    *  is left out, an estimate is called one), and what is saved of it by the bytes really kept. */
@@ -391,8 +404,8 @@
   function drawVideos() {
     var all = lsJson('cb-video-all', []); var sizes = lsJson('cb-video-sizes', {}); var saved = lsJson('cb-videos', {});
     if (!all.length) { $('vids').innerHTML = ''; return; }
-    var on = videoGrades();
-    $('vids').innerHTML = '<b>Lesson videos to save</b> <small>(large; tick the classes that use this Chromebook)</small><br>' + all.map(function (g) {
+    var on = videoGrades() || videoDefault(all);
+    $('vids').innerHTML = '<b>Lesson videos to save</b> <small>(saved last, after everything else; untick a class this Chromebook does not need)</small><br>' + all.map(function (g) {
       var s = sizes[g]; var d = saved[g];
       return '<label><input type="checkbox" data-vg="' + esc(g) + '"' + (on.indexOf(String(g)) >= 0 ? ' checked' : '') + '> Class ' + esc(g) +
         ' <small>' + esc(videoLine(s, d)) + '</small></label>';
@@ -520,7 +533,7 @@
   function context() {
     return { cfg: CFG, hub: CFG.hub, kid: run.ctx.kid || null, games: run.ctx.games || [], key: KEY, log: log, warm: warm, frame: frame, abs: abs, ask: ask, setPct: setPct,
       // added by lane/home (ready/README.md): room on the drive, the classes whose videos to save, small helpers
-      space: space, fits: fits, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
+      space: space, fits: fits, forget: forget, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
   }
   function runStep(s) {
     cur = s; s.files = 0; s.failed = 0; s.gone = 0; s.within = 0; s.label = null; s.expected = false;
