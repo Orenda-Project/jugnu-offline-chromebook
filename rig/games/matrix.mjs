@@ -114,6 +114,9 @@ async function getReady(k) {
   await k.page.waitForFunction(() => { const p = document.getElementById('phase'); const l = document.getElementById('log'); return (p && /Ready\./.test(p.textContent)) || (l && /stopped:/.test(l.textContent)); }, null, { timeout: 30 * 60 * 1000, polling: 1000 });
   const r = await k.page.evaluate(async () => ({ log: document.getElementById('log').textContent.trim().split('\n'), kept: (await (await caches.open('cb-pilot-v1')).keys()).length, games: localStorage.getItem('cb-games-ready'),
     usage: navigator.storage && navigator.storage.estimate ? Math.round((await navigator.storage.estimate()).usage / 1e6) : null, regs: (await navigator.serviceWorker.getRegistrations()).map((x) => x.scope.replace(location.origin, '')) }));
+  // the pilot's own page files are read again (a Get ready pressed a second time skips a step it finished before, and
+  // the device would then play the copies of the first time with no network)
+  await k.page.evaluate(() => Promise.all(['/__cb/boot.js', '/__cb/games-read.js', '/__cb/cb-fit.css', '/sa/play.html'].map((u) => fetch(u, { cache: 'reload' }).then((x) => x.text(), () => null)))).catch(() => {});
   k.out.ready = { seconds: Math.round((Date.now() - t0) / 1000), kept: r.kept, mb: r.usage, workers: r.regs, games: r.games ? JSON.parse(r.games) : null, log: r.log };
   k.say(`get ready: ${k.out.ready.seconds} s, ${r.kept} files, ${r.usage} MB, workers ${r.regs.join(',')} — ${r.log.filter((x) => /big flight|number and story|stopped/.test(x)).join(' · ')}`);
   save(k);

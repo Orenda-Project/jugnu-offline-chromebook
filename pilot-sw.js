@@ -869,8 +869,14 @@ function gOpenRun(req, body, device) {
 
 /** The real run of a kept one: opened now (with the request kept from the start) when it has none yet. */
 var gOpening = {};
+var G_REFUSED_WAIT_MS = 6 * 60 * 60 * 1000; // a start the server refused is not asked for again for this long
 function gRealOf(r) {
   if (r.real && r.real.st) return Promise.resolve(r.real);
+  // The server said no to this run's start (the Big flight already flown this month: 409; not this child: 401/403).
+  // The engine sends a batch and one call per recording on every retry, and each used to ask for the run again:
+  // 3,334 asks in four minutes from ten Chromebooks on 17 Nov, all behind one address for Jugnu's limits. The answer
+  // is remembered; the run's answers stay on the device.
+  if (r.refused && Date.now() - r.refused.at < G_REFUSED_WAIT_MS) return Promise.reject(json(r.refused.body || { error: 'refused' }, r.refused.status));
   if (gOpening[r.sid]) return gOpening[r.sid];
   var done = function () { delete gOpening[r.sid]; };
   gOpening[r.sid] = gPost('session', r.body, r.device).then(function (res) {
@@ -880,6 +886,7 @@ function gRealOf(r) {
         return gPutRun(r).then(function () { return r.real; });
       }
       r.err = res.status + ' ' + (j.error || '');
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) r.refused = { status: res.status, body: j, at: Date.now() };
       return gPutRun(r).then(function () { throw json(j, res.status); });
     });
   }, function () { throw json({ error: 'offline' }, 503); });

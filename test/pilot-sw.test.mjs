@@ -354,3 +354,20 @@ test("a part started with no network under last week's link: the kept start is f
   assert.ok(open, 'the real run is asked for');
   assert.equal(JSON.parse(open.body).t, link);
 });
+
+test('a run the server refuses to open (the Big flight already flown this month) is asked for once, not on every retry', async () => {
+  let opens = 0;
+  const sw = load({ source, fetch: (req) => {
+    if (new URL(req.url).pathname.endsWith('/session')) { opens += 1; return json({ error: 'flight_done' }, 409); }
+    return json({ ok: true });
+  } });
+  sw.net.down = true;
+  const run = await (await sw.post('/api/sa-game/s/session', { ...START, part: 'tower' }, { 'x-wq-device': 'dev-1' })).json();
+  sw.net.down = false;
+  // the engine's upload queue: a batch, then one call per recording, again and again
+  const codes = [];
+  for (let i = 0; i < 12; i += 1) codes.push((await sw.post(i % 3 ? '/api/sa-game/s/audio/presign' : '/api/sa-game/s/batch', { st: run.st, sessionId: run.session_id, taskId: 'en.story', mime: 'audio/webm', bytes: 9, seqFrom: 1, seqTo: 1, events: [], results: [] })).status);
+  assert.ok(codes.every((c) => c === 409), 'every call is told the run was refused');
+  assert.equal(opens, 1);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => [w.ex, w.state]), [['flight:tower', 'refused_409 flight_done']]);
+});

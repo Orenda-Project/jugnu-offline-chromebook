@@ -97,11 +97,12 @@
     /** The passage of this page: the one seen being served, else the kept serve of this page's own address. */
     var keptServe = function () {
       if (served) return Promise.resolve(served);
-      var tok = location.pathname.split('/')[2];
       var pid = new URLSearchParams(location.search).get('pid');
       return caches.open('cb-pilot-v1').then(function (c) {
         return c.keys().then(function (keys) {
-          var hit = keys.map(function (k) { return k.url; }).filter(function (u) { return u.indexOf('/api/wq/ch/' + tok + '/read') >= 0 && (pid ? u.indexOf('pid=' + encodeURIComponent(pid)) >= 0 : u.indexOf('pid=') < 0); })[0];
+          // a saved copy is filed under the home's children, not under the link in this page's address (lane/home):
+          // any home's "read" of this story (or the plain Read aloud) is the passage
+          var hit = keys.map(function (k) { return k.url; }).filter(function (u) { return /\/api\/wq\/ch\/[^/]+\/read(\?|$)/.test(u) && (pid ? u.indexOf('pid=' + encodeURIComponent(pid)) >= 0 : u.indexOf('pid=') < 0); })[0];
           return hit ? c.match(hit).then(function (r) { return r.json(); }).then(function (j) { return j && j.story && j.story.text ? { text: j.story.text, lang: j.lang === 'ur' ? 'ur' : 'en' } : null; }) : null;
         });
       }).then(null, function () { return null; });
