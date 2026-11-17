@@ -321,13 +321,14 @@
    * 13 moves begun 0.6 to 0.9 s after the newer worker appeared; a page already being fetched is waited for, and 18
    * requests for data at that moment were all answered). So the page remembers where it was last asked to go, and
    * when a newer worker has taken over and this page is still here a moment later, it goes there again. A door
-   * inside the page and a form are left alone. */
+   * inside the page, a form and a link to another site are left alone. */
   function moveGuard(w) {
     var nav = w.navigation, sw = w.navigator && w.navigator.serviceWorker;
     if (!nav || !nav.addEventListener || !sw) return;
     var going = null;
     nav.addEventListener('navigate', function (e) {
       if (e.hashChange || e.downloadRequest || e.formData || !e.destination || e.destination.sameDocument) return;
+      if (String(e.destination.url).indexOf(w.location.origin + '/') !== 0) return; // another site, or an app: not this worker's
       going = { url: e.destination.url, at: Date.now() };
     });
     sw.addEventListener('controllerchange', function () {

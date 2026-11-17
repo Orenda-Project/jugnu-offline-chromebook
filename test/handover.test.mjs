@@ -109,7 +109,7 @@ function guarded() {
     navigation: { addEventListener: (t, f) => { on[t] = f; } },
     navigator: { serviceWorker: { addEventListener: (t, f) => { on[t] = f; } } },
     setTimeout: (f, ms) => { timers.push({ f, ms }); },
-    location: { set href(u) { went.push(u); } },
+    location: { origin: ORIGIN, set href(u) { went.push(u); } },
     sessionStorage: { getItem: (k) => (kv.has(k) ? kv.get(k) : null), setItem: (k, v) => kv.set(k, String(v)) },
   };
   new Function('w', `${m[0]}; moveGuard(w);`)(w);
@@ -131,7 +131,7 @@ test('a tap that began before a newer worker took over, on a page that is still 
   assert.equal(p.went.length, 1, 'once: a second takeover does not send the page there again');
 });
 
-test('nothing is made again without a reason: no tap, a tap after the takeover, a door inside the page, a form, an old tap', async () => {
+test('nothing is made again without a reason: no tap, a tap after the takeover, a door inside the page, a form, another site, an old tap', async () => {
   const none = guarded(); none.takeover(); none.later();
   assert.deepEqual(none.went, []);
   const after = guarded(); after.takeover(); await tick(3); after.move(`${ORIGIN}/q/ABC123`); after.later();
@@ -140,6 +140,8 @@ test('nothing is made again without a reason: no tap, a tap after the takeover, 
   assert.deepEqual(door.went, [], 'a door opens inside the page');
   const form = guarded(); form.move(`${ORIGIN}/submit`, { formData: {} }); await tick(3); form.takeover(); form.later();
   assert.deepEqual(form.went, [], 'a form is never sent twice');
+  const away = guarded(); away.move('https://wa.me/923000000000?text=hi'); await tick(3); away.takeover(); away.later();
+  assert.deepEqual(away.went, [], 'a link to another site (or to an app) is not this worker\'s to answer');
   const real = Date.now; const old = guarded(); old.move(`${ORIGIN}/q/ABC123`);
   try { Date.now = () => real() + 60000; old.takeover(); old.later(); } finally { Date.now = real; }
   assert.deepEqual(old.went, [], 'a tap from a minute ago is not what was cut off');
