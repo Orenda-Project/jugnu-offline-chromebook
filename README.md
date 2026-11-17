@@ -344,8 +344,8 @@ The learning games need these in Jugnu itself (the pilot covers each today, on i
 ## What we learned
 
 - **Two home links signed in the same second are the same link** (the link has no nonce), and a link locks to the
-  first device that opens it: five test links made together were one link, and four of five test rigs were locked
-  out. (The HOME block's links carry a nonce.)
+  first device that opens it: five test links made together were one link, and a rig that opened it after another
+  was told "This link was sent to another player". (The HOME block's links carry a nonce.)
 - **A worker of its own scope takes its pages away from every other worker.** Jugnu's battery worker (`/sa/`) left
   the pilot's worker blind on the child's battery page: one offline worker per site, or none of them can finish the job.
 - **A time limit on the network must never answer "offline" when nothing is saved.** The worker's 4 seconds answered
