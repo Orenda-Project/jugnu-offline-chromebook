@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jugnu: read-aloud scored on this device</title>
+<style>
+  :root { --bg: #fbfaf6; --ink: #1f2430; --soft: #6b7280; --line: #e3dfd3; --ok: #1f8a4c; --miss: #b7791f; --ahead: #9aa1ad; --accent: #2f5fd0; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14161b; --ink: #eceef2; --soft: #a2a9b6; --line: #2b2f38; --ok: #5fd08e; --miss: #e0b060; --ahead: #6b7280; --accent: #86a8ff; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { color: var(--soft); margin: 0 0 18px; }
+  label { display: block; font-size: 13px; color: var(--soft); margin: 14px 0 4px; }
+  textarea, select { width: 100%; box-sizing: border-box; font: inherit; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  textarea { min-height: 96px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  button { font: inherit; padding: 9px 16px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+  button.quiet { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  #words { margin-top: 18px; font-size: 22px; line-height: 1.9; }
+  #words[dir=rtl] { font-size: 26px; }
+  #words span { padding: 1px 5px; border-radius: 6px; margin: 0 1px; }
+  .read { color: var(--ok); font-weight: 600; }
+  .skipped { color: var(--miss); text-decoration: underline dotted; }
+  .ahead, .unknown { color: var(--ahead); }
+  #out { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; white-space: pre-wrap; font: 13px/1.6 ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+  .key span { margin-right: 14px; font-size: 13px; }
+</style>
+<main>
+  <h1>Read-aloud, scored on this device</h1>
+  <p class="sub">No network is used once the model is loaded. Pick a recording (or record one), give the text the child was shown, and see each word read or passed over, the words correct per minute, and how long this device took.</p>
+
+  <label for="lang">Language</label>
+  <select id="lang"><option value="en">English</option><option value="ur">Urdu</option></select>
+  <label for="engine">Model</label>
+  <select id="engine"></select>
+  <label for="text">The text the child was shown</label>
+  <textarea id="text">Sana has a red kite. She runs up the hill with it. The wind is strong today.</textarea>
+
+  <div class="row">
+    <input type="file" id="file" accept="audio/*">
+    <button id="rec" class="quiet">Record</button>
+    <button id="go" disabled>Score it</button>
+  </div>
+
+  <div id="words"></div>
+  <div class="key"><span class="read">read</span><span class="skipped">passed over</span><span class="ahead">not reached</span></div>
+  <div id="out">Waiting for a recording.</div>
+</main>
+<script src="match.js"></script>
+<script src="jugnu-speech.js"></script>
+<script>
+  (function () {
+    var $ = function (id) { return document.getElementById(id); };
+    var audio = null; var rec = null; var chunks = [];
+    function engines() {
+      var l = $('lang').value; var sel = $('engine'); sel.innerHTML = '';
+      Object.keys(JugnuSpeech.engines).forEach(function (k) {
+        if (JugnuSpeech.engines[k].langs.indexOf(l) < 0) return;
+        var o = document.createElement('option'); o.value = k; o.textContent = k; sel.appendChild(o);
+      });
+      sel.value = JugnuSpeech.configure({}).engines[l];
+      $('words').dir = l === 'ur' ? 'rtl' : 'ltr';
+    }
+    $('lang').onchange = engines; engines();
+    $('file').onchange = function () { audio = $('file').files[0] || null; $('go').disabled = !audio; $('out').textContent = audio ? 'Ready: ' + audio.name : 'Waiting for a recording.'; };
+    $('rec').onclick = function () {
+      if (rec) { rec.stop(); return; }
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        chunks = []; rec = new MediaRecorder(stream);
+        rec.ondataavailable = function (e) { if (e.data.size) chunks.push(e.data); };
+        rec.onstop = function () { stream.getTracks().forEach(function (t) { t.stop(); }); audio = new Blob(chunks, { type: rec.mimeType }); rec = null; $('rec').textContent = 'Record'; $('go').disabled = false; $('out').textContent = 'Recorded ' + Math.round(audio.size / 1024) + ' KB. Press "Score it".'; };
+        rec.start(); $('rec').textContent = 'Stop';
+        $('out').textContent = 'Recording… read the text aloud, then press Stop.';
+      }, function (e) { $('out').textContent = 'No microphone: ' + e.message; });
+    };
+    $('go').onclick = function () {
+      $('go').disabled = true; $('out').textContent = 'Loading the model and listening…';
+      JugnuSpeech.score(audio, $('text').value, $('lang').value, { engine: $('engine').value }).then(function (r) {
+        $('words').innerHTML = '';
+        r.words.forEach(function (w) { var s = document.createElement('span'); s.className = w.state; s.textContent = w.text; $('words').appendChild(s); $('words').appendChild(document.createTextNode(' ')); });
+        var a = r.ms.audio / 1000;
+        $('out').textContent = [
+          'words correct     ' + r.correct + ' of ' + r.total,
+          'words per minute  ' + r.wcpm + '   (reading time ' + r.seconds + ' s)',
+          'confidence        ' + r.confidence,
+          'heard             ' + r.heard,
+          'engine            ' + r.engine,
+          'this device took  ' + (r.ms.hear / 1000).toFixed(1) + ' s for ' + a.toFixed(1) + ' s of sound  =  ' + (r.ms.hear / r.ms.audio).toFixed(2) + ' × real time   (model load ' + (r.ms.load / 1000).toFixed(1) + ' s, once)',
+          'device            ' + navigator.hardwareConcurrency + ' cores · ' + (navigator.deviceMemory || '?') + ' GB · ' + navigator.userAgent,
+        ].join('\n');
+      }, function (e) { $('out').textContent = 'Could not score: ' + (e && e.message || e); }).then(function () { $('go').disabled = false; });
+    };
+  })();
+</script>
+</html>

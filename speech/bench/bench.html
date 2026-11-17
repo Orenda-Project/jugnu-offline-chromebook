@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Jugnu speech: measurements</title>
+<p>Driven by bench/run.mjs. For a page a person can use, open ../proto.html.</p>
+<script src="../match.js"></script>
+<script src="../jugnu-speech.js"></script>
+<script src="../lib/vosk.js"></script>
+<script>
+  // Vosk (Kaldi, small English) is measured here only: it listens for the passage's own words and nothing else.
+  var voskModel = null;
+  function voskHear(x, expected) {
+    var t0 = performance.now();
+    var ready = voskModel ? Promise.resolve(voskModel) : Vosk.createModel('../models/vosk/vosk-model-small-en-us-0.15.tar.gz').then(function (m) { voskModel = m; voskModel.loadMs = Math.round(performance.now() - t0); return m; });
+    return ready.then(function (model) {
+      var seen = {}; var words = [];
+      expected.toLowerCase().replace(/[^a-z' ]/g, ' ').split(/\s+/).forEach(function (w) { if (w && !seen[w]) { seen[w] = 1; words.push(w); } });
+      var rec = new model.KaldiRecognizer(16000, JSON.stringify(words.concat(['[unk]'])));
+      return new Promise(function (ok) {
+        // A result comes at every pause and once more at the end; the worker says nothing when it has finished, so
+        // the reading is over when no event has come for 4 s (the time taken is counted to the last event).
+        var text = []; var t1 = performance.now(); var last = t1; var asked = false;
+        rec.on('result', function (m) { var t = (m.result && m.result.text) || ''; if (t) text.push(t); last = performance.now(); });
+        rec.on('partialresult', function () { last = performance.now(); });
+        for (var p = 0; p < x.length; p += 8000) rec.acceptWaveformFloat(x.subarray(p, Math.min(x.length, p + 8000)), 16000);
+        rec.retrieveFinalResult(); asked = true;
+        var tick = setInterval(function () {
+          if (asked && performance.now() - last > 4000) { clearInterval(tick); rec.remove(); ok({ text: text.join(' ').replace(/\[unk\]/g, ' '), ms: Math.round(last - t1), loadMs: model.loadMs }); }
+        }, 250);
+      });
+    });
+  }
+
+  window.BENCH = {
+    /** A fixed piece of arithmetic, to check what a CPU throttle really does to this page. */
+    calib: function () {
+      var x = new Float32Array(16000 * 20); for (var i = 0; i < x.length; i += 1) x[i] = Math.sin(i * 0.01) * 0.3;
+      var mean = new Array(80).fill(0); var inv = new Array(80).fill(1);
+      var t0 = performance.now(); JugnuSpeech._.fbank(x, mean, inv); return Math.round(performance.now() - t0);
+    },
+    run: function (item) {
+      JugnuSpeech.configure({ worker: !!item.worker });   // measured in the page itself unless --worker
+      return fetch(item.url).then(function (r) { return r.arrayBuffer(); }).then(function (ab) { return JugnuSpeech._.pcm(ab); }).then(function (x) {
+        if (item.engine === 'vosk-small-en') {
+          return voskHear(x, item.expected).then(function (r) {
+            var s = JugnuMatch.score(item.expected, r.text, { sound: 'en' });
+            return { words: s.words, correct: s.correct, heard: r.text, engine: 'device:vosk-small-en', ms: { hear: r.ms, load: r.loadMs, audio: Math.round(x.length / 16) } };
+          });
+        }
+        return JugnuSpeech.score(x, item.expected, item.lang, Object.assign({ engine: item.engine, kind: item.kind }, item.opts || {}));
+      });
+    },
+  };
+</script>
