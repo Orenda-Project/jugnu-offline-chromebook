@@ -359,7 +359,11 @@
         var files = [];
         return ids.reduce(function (p, id) {
           return p.then(function () { return text('/api/wq/stories/book/' + id + '/h/' + CFG.hub + '?kid=' + kid); }).then(function (b) {
-            var fr = /([a-z]{1,8}\d{0,3}-[0-9a-f]{8}\.(?:webp|ogg|mp3|jpg|json))/g, x, own = [];
+            // A book's files are <stem>-<8 hex>.<ext>, and a stem may mix letters and digits (a question's option
+            // voice is q1o2-….ogg). The name is taken whole, from the quote or slash before it: the old pattern began
+            // anywhere, cut q1o2-… down to o2-…, and for weeks 126 option voices were asked for under names the
+            // server does not have (404) and never saved.
+            var fr = /(?:^|["'\/\\])([a-z][a-z0-9]{0,15}-[0-9a-f]{8}\.(?:webp|ogg|mp3|jpg|json))/g, x, own = [];
             while ((x = fr.exec(b))) if (own.indexOf(x[1]) < 0) own.push(x[1]);
             own.forEach(function (f) { files.push(abs('/s/' + id + '/' + f)); });
           });
