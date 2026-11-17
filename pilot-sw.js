@@ -16,6 +16,9 @@ var NETWORK_WAIT_MS = 4000;
 var MEDIA_RX = /\.(mp3|m4a|ogg|opus|wav|webm|mp4|m3u8|ts)(\?|$)/i;
 var misses = [];
 
+// Storybooks (shelf, books, story steps, the speech key): sw-stories.js answers those first.
+try { importScripts('/__cb/sw-stories.js'); } catch (e) { /* stories then go the general way below */ }
+
 self.addEventListener('install', function () { self.skipWaiting(); });
 self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim().then(homeMove)); }); // homeMove: block HOME
 
@@ -47,7 +50,12 @@ function kept(key) {
     if (key.indexOf('/__cb/post') >= 0) return c.match(key);
     // READY (lane/home): a door's list is the answer to its whole question (which door, which class, which subject):
     // never another list of the same address (sameAsk), where anything else may differ in its "?…".
-    return c.match(key).then(function (hit) { return hit || (LIST_RX.test(key) ? sameAsk(c, key) : c.match(key, { ignoreSearch: true })); })
+    // STORIES (lane/stories): any other file is looked for exactly, then as the same file kept without its "?v=…"
+    // (Get ready saves most files that way), and only then by a search of every kept file for the same path. That
+    // search reads the whole list: 470 ms a miss at 4,800 files on a laptop, so it must never be the common case.
+    var bare = key.split('?')[0];
+    return c.match(key).then(function (hit) { return hit || (LIST_RX.test(key) ? sameAsk(c, key) : (bare !== key ? c.match(bare) : undefined)); })
+      .then(function (hit) { return hit || (LIST_RX.test(key) ? undefined : c.match(key, { ignoreSearch: true })); })
       .then(function (hit) { return hit || homeFallback(c, key); }); // HOME: else this Chromebook's own saved home
   });
 }
@@ -775,6 +783,8 @@ self.addEventListener('fetch', function (e) {
   var req = e.request;
   var u = new URL(req.url);
   if (u.pathname === '/__cb/report' || u.pathname === '/__cb/sw.js' || u.pathname === '/__cb/home') return;
+  // STORIES (lane/stories): the shelf, a book, a story step and the speech key are answered by sw-stories.js
+  if (self.CB_STORIES && self.CB_STORIES.fetch(e)) return;
   // HOME (lane/home): a request that names a child home link gets this Chromebook's live link (or its saved copy)
   if (req.method === 'POST' && u.origin === self.location.origin) { e.respondWith(homePost(req)); return; }
   if (req.method !== 'GET') { if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } return; } // READY: self-test
@@ -846,6 +856,7 @@ function warm(urls, opts) {
 self.addEventListener('message', function (e) {
   var d = e.data || {};
   var port = e.ports && e.ports[0];
+  if (self.CB_STORIES && self.CB_STORIES.message(e)) return;
   if (d.type === 'report') { e.waitUntil(Promise.all([report(), sync()])); return; }
   if (d.type === 'hub' && typeof d.hub === 'string' && /^[A-Za-z0-9._-]{20,400}$/.test(d.hub)) {
     e.waitUntil(homeSet(d)); // HOME (lane/home): this Chromebook's child home, with the rest of its record kept

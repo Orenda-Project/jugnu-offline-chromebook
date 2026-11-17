@@ -5,6 +5,10 @@
   if (!('serviceWorker' in navigator)) return;
   var badge;
 
+  // Storybooks: "Your turn" saved on this device when Jugnu's speech service cannot be reached, and the kept story
+  // steps sent when the network is back (stories.js).
+  (function () { var s = document.createElement('script'); s.src = '/__cb/stories.js'; s.async = false; (document.head || document.documentElement).appendChild(s); }());
+
   function show(text, offline) {
     if (!document.body) return;
     if (!badge) {
