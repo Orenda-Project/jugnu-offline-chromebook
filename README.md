@@ -326,6 +326,21 @@ The remaining work is filed as issues in this repo. In short:
    it (0.6–1.3 GB a class, 4.6 GB for Classes 1–5; Nursery, KG and Class 6 are listed without a size on sandbox).
 10. Fleet measurement: per device, ready for offline, last sync, offline plays, sync delay.
 
+The learning games need these in Jugnu itself (the pilot covers each today, on its own pages only):
+
+- The battery's screens (`dashboard/sa/sa.css`, "Round 8 layout") sized for a wide, short page: the rules in
+  `cb-fit.css` and the scale-to-fit in `boot.js` are the ones to carry over.
+- Keys: a digit, a letter, Backspace and Enter for the number pads and the letter strip (battery and Challenge).
+- A part of the big flight started with no network: keep the start's request and open the run when the network is
+  back (`dashboard/sa/sink-game.js` already has `forGame`; the map page does not use it), and send from any page.
+- The way back to the sea map with no network (`sa-engine.js` waits for a HEAD of the map to answer).
+- The battery worker asked to keep all six batteries when the game is first opened, not one part at a time.
+- Listen's questions handed over with the game; a late result accepted for a served run (number games, readings).
+- A decision on keeping and scoring children's readings in the big flight (today: recorded, dropped, never scored).
+- Uploads of recordings from any origin Jugnu is served from (the bucket's CORS names one).
+- The last battery screen's "Go back" 48 px below a 633 px page; the Challenge's microphone notice and read-along
+  controls just under it.
+
 ## What we learned
 
 - **Two home links signed in the same second are the same link** (the link has no nonce), and a link locks to the
