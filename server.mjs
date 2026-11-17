@@ -60,11 +60,11 @@ const appendJsonl = (name, row) => fs.appendFileSync(path.join(LOG_DIR, name), J
 function readBody(req, cb) {
   let body = '';
   req.on('data', (c) => { body += c; if (body.length > 64 * 1024) req.destroy(); });
-  req.on('end', () => cb(safeJson(body)));
+  return new Promise((ok) => { req.on('end', () => ok(cb(safeJson(body)))); }); // resolves with what cb returns (a promise, for an async cb)
 }
 
 // HOME (lane/home): POST /__cb/home signs this Chromebook a fresh child home; /cb/home is the address that opens it.
-const home = homeRoutes({ here: HERE, deviceKey: DEVICE_KEY, loadConfig, roster: ROSTER, readBody, log: (e) => log(e) });
+const home = homeRoutes({ here: HERE, deviceKey: DEVICE_KEY, loadConfig, roster: ROSTER, readBody, log: (e) => log(e), upstream: UPSTREAM });
 // VIDEOS (lane/home): GET /__cb/media?u=<signed media link> fetches a lesson video (or clip) for a Chromebook to keep.
 const media = mediaRoutes({ deviceKey: DEVICE_KEY, log: (e) => log(e) });
 

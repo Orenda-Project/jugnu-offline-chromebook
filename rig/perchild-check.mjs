@@ -11,7 +11,7 @@ const [known, unknown] = process.argv.slice(2);
 if (!KEY || !known || !unknown) { console.error('usage: DEVICE_KEY=… node rig/perchild-check.mjs <class with a known child> <class with an unknown child>'); process.exit(1); }
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
-const { ctx, page, log } = await launch({ fresh: true });
+const { ctx, page, log } = await launch({ fresh: process.argv.includes('--fresh') });
 const ask = (msg) => page.evaluate((m) => new Promise((ok) => { const ch = new MessageChannel(); const t = setTimeout(() => ok(null), 9000); ch.port1.onmessage = (e) => { clearTimeout(t); ok(e.data); }; navigator.serviceWorker.controller.postMessage(m, [ch.port2]); }), msg);
 const pick = async (grade) => {
   await page.goto(`${BASE}/who`, { waitUntil: 'load' });

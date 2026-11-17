@@ -29,13 +29,36 @@ import { signer, decode, HUB_TTL_S } from './hub-sign.mjs';
 
 const PER_HOUR = 120; // links one Chromebook (or one address without a device id) may ask for in an hour
 
-export function homeRoutes({ here, deviceKey, loadConfig, roster, readBody, log }) {
+export function homeRoutes({ here, deviceKey, loadConfig, roster, readBody, log, upstream }) {
   const env = process.env;
   const ttlS = Math.max(20, Number(env.HOME_TTL_S) || HUB_TTL_S);
   const perChild = env.HOME_PER_CHILD === '1';
   const rosterIds = new Set();
   if (roster) for (const c of roster.classes || []) for (const s of c.students || []) rosterIds.add(String(s.id));
   const asked = new Map(); // who -> [timestamps]
+  const known = new Map(); // class-list id -> {at, yes}: does Jugnu have this child?
+
+  /**
+   * Does Jugnu know this class-list child? Asked with a link of its own that lasts a minute and a made-up device, so
+   * the link handed to the Chromebook is never opened by anyone but the Chromebook. A home with no child in it means
+   * the class list's id is not a student in this Jugnu database: the Chromebook then keeps its own home.
+   */
+  async function inJugnu(set, id, lang) {
+    const hit = known.get(id);
+    if (hit && Date.now() - hit.at < (hit.yes ? 3600e3 : 600e3)) return hit.yes;
+    const probe = set.s.sign({ ids: [id], lang, ttlS: 60, nonce: crypto.randomBytes(6).toString('base64url') });
+    const device = crypto.randomBytes(16).toString('base64url');
+    let yes = false;
+    try {
+      const r = await fetch(new URL(`/api/wq/hub/${probe.token}`, upstream), { method: 'POST', headers: { 'content-type': 'application/json', cookie: `wq_dv=${device}` }, body: JSON.stringify({ device_ref: device }), signal: AbortSignal.timeout(8000) });
+      const j = r.ok ? await r.json() : null;
+      if (!j) return false; // Jugnu did not answer: not remembered, asked again next time
+      yes = Array.isArray(j.kids) && j.kids.length > 0;
+    } catch { return false; }
+    known.set(id, { at: Date.now(), yes });
+    if (known.size > 50000) known.clear();
+    return yes;
+  }
 
   /** Read at each ask, so a config change needs no restart; the signer is rebuilt only when its inputs change. */
   let built = null;
@@ -97,7 +120,7 @@ export function homeRoutes({ here, deviceKey, loadConfig, roster, readBody, log 
       return true;
     }
     if (url.pathname === '/__cb/home' && req.method === 'POST') {
-      readBody(req, (b) => {
+      readBody(req, async (b) => {
         const done = (status, body) => { json(res, status, body); log({ m: 'POST', p: url.pathname, s: status, local: true, ua, ...(body.error ? { err: body.error } : { kind: body.kind }) }); };
         if (!b || typeof b !== 'object') return done(400, { error: 'bad_request' });
         if (!deviceKey) return done(503, { error: 'no_device_key' });
@@ -115,13 +138,14 @@ export function homeRoutes({ here, deviceKey, loadConfig, roster, readBody, log 
           // list's ids are Jugnu's (HOME_PER_CHILD). Anything else is answered plainly; the caller keeps the device home.
           if (!perChild) return done(409, { error: 'per_child_off' });
           if (!rosterIds.has(String(b.student))) return done(404, { error: 'not_on_class_list' });
+          if (!(await inJugnu(set, String(b.student), lang))) return done(404, { error: 'not_in_jugnu' });
           ids = [String(b.student)];
           kind = 'child';
         }
         const out = set.s.sign({ ids, lang, ttlS, nonce: crypto.randomBytes(6).toString('base64url') });
         if (!out) return done(503, { error: 'no_home_student' });
         return done(200, { hub: out.token, exp: out.exp, ttl: ttlS, now: Math.floor(Date.now() / 1000), kind });
-      });
+      }).catch(() => { if (!res.headersSent) json(res, 500, { error: 'failed' }); });
       return true;
     }
     return false;
