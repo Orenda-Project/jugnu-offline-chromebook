@@ -119,6 +119,26 @@ A storybook has four parts, and each has its own way of working with no network:
 A saved reading is scored with the same daily limits as a live one (40 pages a child a day, and the whole service's
 daily reads), counted on the day it is scored: a child who read more than that offline is scored over the next days.
 
+### What is proven for storybooks (17 Nov 2026, laptop rig only)
+
+A Chromebook-shaped Chrome (1366×633, ChromeOS user agent, Chrome's own autoplay rule), sandbox Jugnu, one test
+child. "Offline" is the server dropping every connection and the browser offline, both. **Not yet on a real
+Chromebook**: the test unit was off the network that day.
+
+| Test | Result |
+|---|---|
+| Get ready on a new device | 14 shelves, 86 books (50 English, 36 Urdu), 717 pages, 3,182 of 3,182 pictures and voices, answers for 86 books; 15 min in all on a laptop, 13 of them storybooks (7 of those asking the answers: the first Chromebook only). A second Get ready: 2 min 20 s. With the scorer's models, 483 MB on the device |
+| Check this Chromebook (no network reached) | Stories: 18 of 18 fine (every shelf, every book's files, the answers, a book of each grade and language opened, voices played) |
+| Every book online: Jugnu reads, the words light, questions, look-back, done | 86 of 86 books, 717 of 717 pages played to the end with the light moving, 394 questions, every step answered 200 by the server |
+| Every book with the network off | 86 of 86 books, 717 of 717 pages, 394 questions checked on the device (253 look-backs), 86 done screens; 975 steps kept |
+| Back online after the offline run | 1,076 kept steps sent by themselves (411 from one device in 4 min 9 s), none dropped; the server's shelf marks 50 of 50 English and 36 of 36 Urdu books read |
+| Your turn online (live), a page of each grade 1-5, English and Urdu | Words counted on every page: Urdu 14/16, 26/26, 11/11, 20/21, 49/71; English 4/5, 15/15, 27/27, 61 in four parts, 29/64 |
+| Your turn with the network off, the same pages | Saved and scored after reconnecting: Urdu 14/16, 26/26, 11/11, 20/21 (equal to live), 71/71 in four parts |
+| Your turn with the network off, scored on the device | English: 12/12, 8/8, 8/8 on the device and online; Urdu: 15, 17, 17 on the device, 14/16, 18/18, 18/18 online. The page shows words and stars, no speed; the server gets the online count |
+| Chrome's fake microphone playing a recording of the page, network off | Device: 5 words lit. 12 s after reconnecting the server had 4/5, 1,260 ms, the same as the live read of that recording. Two of five words said: 2 lit. Silence: nothing saved, "Let's read it together" |
+| The network cut 2.5 s into a live read | Before: sent as 0 words. Now: 5 words lit on the device, 4/5 from the speech service after reconnecting |
+| A new home link for the same child, network off | The Urdu grade 3 shelf and a book opened from the device; its steps were sent under the new link |
+
 ## Run it
 
 Settings (environment variables; on a laptop, files work too):
