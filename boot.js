@@ -203,5 +203,31 @@
     window.__cbDrain = drain;
     window.addEventListener('online', function () { setTimeout(drain, 1500); });
     setTimeout(drain, 3500);
+
+    // A Chromebook has a keyboard; Jugnu's number pads and letter strip are for a touch screen and take no key at
+    // all (no key handler in the battery's screens or the Challenge page). A digit, a letter, Backspace or Enter
+    // presses the on-screen key of that name, so a child can type "12" and press Enter. Urdu digits count as digits.
+    // On a battery screen with no pad showing, Enter presses the screen's one main button (Next, Go, Start), which
+    // Jugnu keeps disabled until it has finished speaking.
+    document.addEventListener('keydown', function (e) {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.defaultPrevented) return;
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      var k = e.key;
+      var ur = '۰۱۲۳۴۵۶۷۸۹'.indexOf(k);
+      var want = /^[0-9]$/.test(k) ? k : ur >= 0 ? String(ur) : k === 'Backspace' ? 'del' : k === 'Enter' ? 'ok' : /^[a-zA-Z]$/.test(k) ? k.toLowerCase() : null;
+      if (!want) return;
+      var shown = function (b) { return b && b.offsetParent !== null && !b.disabled && !b.hasAttribute('hidden'); };
+      var keys = document.querySelectorAll('.sae-keypad .sae-key, .sae-letters .sae-key, .wqc-keys .wqc-k');
+      for (var i = 0; i < keys.length; i += 1) {
+        var name = keys[i].getAttribute('data-key') || keys[i].getAttribute('data-k');
+        if (name === want && shown(keys[i])) { e.preventDefault(); keys[i].click(); return; }
+      }
+      if (want === 'ok' && !keys.length && /^\/sa\/play\.html/.test(location.pathname)) {
+        var main = [].slice.call(document.querySelectorAll('.sae-primary')).filter(shown);
+        // a focused button takes its own Enter; this is for a page where nothing is focused
+        if (main.length === 1 && (!t || t.tagName !== 'BUTTON')) { e.preventDefault(); main[0].click(); }
+      }
+    });
   }());
 }());
