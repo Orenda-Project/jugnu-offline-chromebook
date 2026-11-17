@@ -267,6 +267,13 @@
     window.addEventListener('online', function () { setTimeout(drain, 1500); });
     setTimeout(drain, 3500);
 
+    // The pilot's own files kept on this Chromebook follow the pilot's release (pilot-sw.js, "follow the pilot's
+    // release"): asked on every page load with a network; nothing is read again while the release is the same.
+    setTimeout(function () {
+      var w = navigator.serviceWorker.controller;
+      if (w && navigator.onLine) w.postMessage({ type: 'release' });
+    }, 2500);
+
     // A reading done with no network gets its feedback from the scorer on this Chromebook: lit words and stars,
     // never words a minute (games-read.js; the speech lane's scorer). On the Challenge page it watches for a
     // recording the offline worker took; on the sea map, back from a part, it scores that part's stories. The
@@ -304,6 +311,31 @@
       try {
         new MutationObserver(function () { clearTimeout(fitT); fitT = setTimeout(fitScreen, 50); }).observe(document.documentElement, { childList: true, subtree: true });
         window.addEventListener('resize', fitScreen);
+      } catch (e) { /* the screens as they are */ }
+    }
+
+    // The Challenge's screens (/c/…) on a short page. They are sized for a phone held upright: on a 633 px page the
+    // number pad's 0 and delete, the microphone notice's OK and a result card's Home sat 120 to 250 px below the page
+    // (the taller Urdu lines most of all), so a child had to scroll to answer. A screen taller than the page is
+    // scaled down to it (never below 0.7). The screens a child reads ALOUD from (read-ready, read-rec, read-live)
+    // are left alone: reading size matters more there, and a long passage scrolls by design.
+    if (/^\/c\//.test(location.pathname)) {
+      var fitCT = null;
+      var fitChallenge = function () {
+        var scr = document.querySelector('#wq section.wq-screen');
+        if (!scr) return;
+        scr.style.zoom = '';
+        if (window.innerWidth < 600 || /^read-(ready|rec|live)$/.test(scr.getAttribute('data-screen') || '')) return;
+        var page = document.documentElement.scrollHeight;
+        var have = window.innerHeight;
+        if (page <= have + 2) return;
+        var own = scr.getBoundingClientRect().height;
+        var rest = page - own;                       // what is above and below the screen keeps its size
+        if (own > 0 && have - rest > 120) scr.style.zoom = String(Math.max(0.7, (have - rest - 2) / own));
+      };
+      try {
+        new MutationObserver(function () { clearTimeout(fitCT); fitCT = setTimeout(fitChallenge, 50); }).observe(document.documentElement, { childList: true, subtree: true });
+        window.addEventListener('resize', fitChallenge);
       } catch (e) { /* the screens as they are */ }
     }
 

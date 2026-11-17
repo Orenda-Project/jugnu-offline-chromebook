@@ -101,6 +101,32 @@ export async function playPart(page, opts = {}) {
   for (const w of (battery && battery.check_words) || []) for (const l of ['en', 'ur']) if (w.audio && w.audio[l]) wordOfClip[w.audio[l].split('/').pop()] = w;
   let lastKey = '', lastChange = Date.now(), cur = null, wrongLeft = 0, recStart = 0, oralStart = 0, n = 0, typedFor = '';
   const seen = new Set();
+  // The last screen as the child sees it arrive: every animation frame for three seconds from the moment it is in
+  // the page, one row each time something moves: [ms, page height, bottom of its button, bottom of the screen].
+  await page.evaluate(() => {
+    const out = (window.__cbEndSeries = []); let t0 = 0;
+    const tick = () => {
+      const end = document.querySelector('#sae-root .sae-screen.sae-end');
+      if (end) {
+        if (!t0) t0 = performance.now();
+        const btn = end.querySelector('.sae-btn, button');
+        const row = [Math.round(performance.now() - t0), document.documentElement.scrollHeight, btn ? Math.round(btn.getBoundingClientRect().bottom) : null, Math.round(end.getBoundingClientRect().bottom)];
+        const last = out[out.length - 1];
+        if (!last || last[1] !== row[1] || last[2] !== row[2] || last[3] !== row[3]) {
+          out.push(row);
+          // what is moving: each part of the screen (top+height), and what styles the screen
+          const box = (e) => { const r = e.getBoundingClientRect(); return Math.round(r.top) + '+' + Math.round(r.height); };
+          const cs = getComputedStyle(end); const main = document.querySelector('main.sae');
+          (window.__cbEndParts = window.__cbEndParts || []).push({ ms: row[0], screen: box(end), cls: end.className, main: main ? main.className + ' ' + box(main) : '',
+            pad: cs.paddingTop + '/' + cs.paddingBottom, transform: cs.transform, zoom: end.style.zoom || '',
+            parts: [...end.querySelectorAll('.sae-body, .sae-foot, .sae-body > *, .sae-foot > *')].map((e) => (String(e.className || e.tagName).split(' ')[0] || e.tagName) + ':' + box(e)).join(' ') });
+        }
+        if (performance.now() - t0 > 3000) return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }).catch(() => {});
   const anomaly = (a) => { if (!report.anomalies.includes(a)) { report.anomalies.push(a); o.say(`   ! ${a}`); } };
 
   while (Date.now() - t0 < o.maxMs) {
@@ -227,7 +253,21 @@ export async function playPart(page, opts = {}) {
       }
     };
     const r = await act();
-    if (r === 'end') break;
+    if (r === 'end') {
+      // the last screen: where its one button is on the page, and what makes the page taller than the window
+      await page.waitForTimeout(3200);
+      report.endSeries = await page.evaluate(() => window.__cbEndSeries || []).catch(() => []);
+      report.endParts = await page.evaluate(() => window.__cbEndParts || []).catch(() => []);
+      report.endDom = await page.evaluate(() => {
+        const box = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom), Math.round(r.height)]; };
+        const scr = document.querySelector('#sae-root .sae-screen'); const btn = document.querySelector('.sae-end .sae-btn, .sae-end button');
+        return { win: innerHeight, doc: document.documentElement.scrollHeight, zoom: scr ? scr.style.zoom || '' : null, screen: scr ? box(scr) : null, button: btn ? box(btn) : null,
+          body: [...document.body.children].map((e) => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 24)}:${getComputedStyle(e).position}:${box(e).join('/')}`).slice(0, 10),
+          root: [...(document.getElementById('sae-root') || document.body).children].map((e) => `${String(e.className).slice(0, 30)}:${box(e).join('/')}`).slice(0, 5),
+          kids: scr ? [...scr.children].map((e) => `${String(e.className).slice(0, 20)}:${box(e).join('/')}:pb${getComputedStyle(e).paddingBottom}`) : [], pad: scr ? getComputedStyle(scr).padding : null };
+      }).catch(() => null);
+      break;
+    }
     await page.waitForTimeout(s.phase === 'running' && s.task && (s.task.mode === 'tap' || s.task.mode === 'keypad' || s.task.mode === 'keyboard') ? 160 : 350);
   }
   if (Date.now() - t0 >= o.maxMs) anomaly(`not finished after ${Math.round(o.maxMs / 60000)} min`);

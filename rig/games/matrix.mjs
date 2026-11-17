@@ -70,9 +70,11 @@ async function flight(k, off) {
     const cut = r.layout.filter((x) => x.cut && x.cut.length).map((x) => `${x.at.replace('sae-screen.', '')} [${x.cut.join(', ')}]`);
     const scrolls = Object.values(r.scrolls || {}).reduce((a, n) => a + n, 0);
     const row = { part, session: sid, stones: st.stones.length, ended: r.results.length, results: r.results, sounds: `${r.media.played}/${r.media.tried}`, sound_failures: r.media.failed, cut, scrolls, anomalies: r.anomalies,
-      back: back.back, card: !!back.card, card_rows: back.rows || [], device, seconds: Math.round(r.ms / 1000), ok: !r.anomalies.length && back.back && r.results.length === st.stones.length };
+      back: back.back, card: !!back.card, card_rows: back.rows || [], device, end: r.endDom || null, end_series: r.endSeries || [], end_parts: r.endParts || [], seconds: Math.round(r.ms / 1000), ok: !r.anomalies.length && back.back && r.results.length === st.stones.length };
     k.out.flight.push(row);
     k.say(`  ${row.ok ? 'OK  ' : 'FAIL'} ${part}: ${row.ended}/${row.stones} stones ended · sounds ${row.sounds}${r.media.failed.length ? ' FAILED ' + r.media.failed.slice(0, 3).join(', ') : ''} · cut ${cut.length} · scrolls ${scrolls} · back ${back.back ? (back.card ? 'card' : 'map, no card') : 'NO'} · ${row.seconds} s${r.anomalies.length ? ' · ' + r.anomalies.join(' | ') : ''}`);
+    if (r.endSeries && r.endSeries.length) k.say(`       last screen as it arrives [ms, page px, button bottom, screen bottom]: ${r.endSeries.slice(0, 12).map((x) => x.join('/')).join('  ')}`);
+    if (r.endDom) k.say(`       last screen: page ${r.endDom.doc}px in a ${r.endDom.win}px window, "Go back" at ${r.endDom.button ? r.endDom.button[0] + '-' + r.endDom.button[1] : '?'}px, zoom ${r.endDom.zoom || 'none'}`);
     k.say(`       ${r.results.map((x) => `${x.task}=${x.stop}${x.correct != null ? `(${x.correct}/${x.attempted})` : ''}${x.audio ? '[' + x.audio + ']' : ''}`).join(' ')}`);
     save(k);
     if (!back.back) break;
@@ -110,7 +112,9 @@ async function getReady(k) {
   await k.page.goto(`${BASE}/cb?hub=${k.token}`, { waitUntil: 'load', timeout: 60000 });
   await k.page.waitForTimeout(1500);
   // a Get ready that was stopped part-way carries on by itself when the page opens (its button is then off)
-  await k.page.click('#ready', { timeout: 5000 }).catch(() => {});
+  // --again: "Start again from the beginning" (every step runs, what is saved is skipped), else Get ready / Carry on
+  if (flag('again', false) && await k.page.locator('#again:visible').count()) await k.page.click('#again', { timeout: 5000 }).catch(() => {});
+  else await k.page.click('#ready', { timeout: 5000 }).catch(() => {});
   await k.page.waitForFunction(() => { const p = document.getElementById('phase'); const l = document.getElementById('log'); return (p && /Ready\./.test(p.textContent)) || (l && /stopped:/.test(l.textContent)); }, null, { timeout: 30 * 60 * 1000, polling: 1000 });
   const r = await k.page.evaluate(async () => ({ log: document.getElementById('log').textContent.trim().split('\n'), kept: (await (await caches.open('cb-pilot-v1')).keys()).length, games: localStorage.getItem('cb-games-ready'),
     usage: navigator.storage && navigator.storage.estimate ? Math.round((await navigator.storage.estimate()).usage / 1e6) : null, regs: (await navigator.serviceWorker.getRegistrations()).map((x) => x.scope.replace(location.origin, '')) }));
@@ -118,7 +122,7 @@ async function getReady(k) {
   // the device would then play the copies of the first time with no network)
   await k.page.evaluate(() => Promise.all(['/__cb/boot.js', '/__cb/games-read.js', '/__cb/cb-fit.css', '/sa/play.html'].map((u) => fetch(u, { cache: 'reload' }).then((x) => x.text(), () => null)))).catch(() => {});
   k.out.ready = { seconds: Math.round((Date.now() - t0) / 1000), kept: r.kept, mb: r.usage, workers: r.regs, games: r.games ? JSON.parse(r.games) : null, log: r.log };
-  k.say(`get ready: ${k.out.ready.seconds} s, ${r.kept} files, ${r.usage} MB, workers ${r.regs.join(',')} — ${r.log.filter((x) => /big flight|number and story|stopped/.test(x)).join(' · ')}`);
+  k.say(`get ready: ${k.out.ready.seconds} s, ${r.kept} files, ${r.usage} MB, workers ${r.regs.join(',')} — ${r.log.filter((x) => /big flight|number and story|Listen|stopped/.test(x)).join(' · ')}`);
   save(k);
 }
 
@@ -168,7 +172,9 @@ try {
     const errs = [...new Set(k.log.filter((l) => !/favicon|\/api\/wq\/e\b/.test(l)))];
     k.out.page_errors = errs.filter((l) => /pageerror/.test(l)).slice(-10);
     k.out.http_errors = errs.filter((l) => /\[http /.test(l)).slice(-15);
+    k.out.failed_requests = errs.filter((l) => /\[failed\]/.test(l) && !/\/__cb\/sw\.js|\/api\/wq\/e\b/.test(l)).slice(-25);   // requests that got no answer at all
     k.say(`-- page errors ${k.out.page_errors.length}; 4xx/5xx ${k.out.http_errors.length}: ${k.out.http_errors.slice(-6).join(' ; ')}`);
+    if (k.out.failed_requests.length) k.say(`-- requests with no answer ${k.out.failed_requests.length}: ${k.out.failed_requests.slice(-8).join(' ; ')}`);
     save(k);
     const f = k.out.flight, c = k.out.challenge;
     console.log(`${k.key.padEnd(9)} G${k.grade} ${k.lang} ${mode}: flight ${f.filter((x) => x.ok).length}/${f.length} parts ok [${f.map((x) => `${x.part}:${x.ok ? 'ok' : 'FAIL'}`).join(' ')}] · challenge ${c.filter((x) => x.ok).length}/${c.length} ok [${c.map((x) => `${x.item}:${x.ok ? 'ok' : 'FAIL'}`).join(' ')}]${k.out.reconnect ? ' · left waiting: ' + ((k.out.reconnect.outbox || []).filter((x) => x.state !== 'sent').length) : ''}`);

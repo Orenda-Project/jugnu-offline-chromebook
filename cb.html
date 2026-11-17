@@ -331,16 +331,24 @@
       setPct(10, 'opening the child home…');
       return frame('/h/' + CFG.hub, 7000).then(function (f) {
         // What a child does: open the Games door (its list carries the game links and the child's id), then the others.
-        var d = f.contentDocument;
+        // games lane (18 Nov): the frame's page is read each time it is used, never held. A home that opens again by
+        // itself after it was first read (a newer worker takes over, a link is renewed) left this step holding the
+        // page that had gone: no door was found in it, the step stopped, and with it nothing of the Games door was
+        // saved (seen once on the rig). If no door is there the home is given a little longer once, and a stop says
+        // what the frame was showing.
+        var doc = function () { try { return f.contentDocument || document.implementation.createHTMLDocument(''); } catch (e) { return document.implementation.createHTMLDocument(''); } };
+        var d = { querySelector: function (s) { return doc().querySelector(s); }, querySelectorAll: function (s) { return doc().querySelectorAll(s); } };
+        var shown = function () { var x = doc(); return '"' + String(x.title || '').slice(0, 40) + '" ' + String((x.body && x.body.innerText) || '').replace(/\s+/g, ' ').slice(0, 80); };
         var door = function (name) { var a = d.querySelector('a.wq-door[href="#' + name + '"]'); if (a) a.click(); return delay(3500); };
-        return door('games').then(function () {
+        var first = d.querySelector('a.wq-door') ? Promise.resolve() : delay(8000);
+        return first.then(function () { return door('games'); }).then(function () {
           var a = [].slice.call(d.querySelectorAll('a[href]')).map(function (x) { return x.getAttribute('href'); });
           run.ctx.games = a.filter(function (h) { return /^\/(c|sa-game)\//.test(h); }).filter(function (h, i, all) { return all.indexOf(h) === i; });
           run.ctx.kid = a.map(function (h) { var m = /[?&]kid=([0-9a-f]+)/.exec(h); return m && m[1]; }).filter(Boolean)[0] || run.ctx.kid || null;
           setPct(60, 'opening Stories and Videos…');
           return door('stories');
         }).then(function () { return door('videos'); }).then(function () {
-          if (!d.querySelector('a.wq-door')) throw new Error('the child home did not open');
+          if (!d.querySelector('a.wq-door')) throw new Error('the child home did not open: the frame shows ' + shown());
           ls('cb-kid', run.ctx.kid || '');
           // the home's own install manifest (the browser asks for it only in a real tab, never in this hidden frame)
           return warm([abs('/h/' + CFG.hub + '/manifest.webmanifest' + (run.ctx.kid ? '?kid=' + run.ctx.kid : ''))], { each: function () {} });
@@ -456,7 +464,24 @@
     run.running = true; run.started = run.started || Date.now(); saveRun();
     $('phase').textContent = 'Installing the offline worker…';
     var t0 = Date.now();
-    return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
+    return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function (reg) {
+      // games lane (18 Nov): a newer worker (a new pilot release) takes over BEFORE the steps start. Seen on the rig:
+      // it waited behind the older worker while Get ready kept that one busy, then took over in the middle and cut
+      // what the older one was answering (the child home's frame failed; nothing behind the Games door was saved).
+      // So: ask now whether there is a newer one, and if so wait for it to be in charge (half a minute at most).
+      if (!reg || !navigator.serviceWorker.controller || typeof reg.update !== 'function' || !navigator.onLine) return reg;
+      return reg.update().then(null, function () {}).then(function () {
+        var next = reg.installing || reg.waiting;
+        if (!next) return reg;
+        $('phase').textContent = 'A newer offline worker is taking over…';
+        return new Promise(function (ok) {
+          var done = false; var go = function () { if (done) return; done = true; setTimeout(function () { ok(reg); }, 600); };
+          next.addEventListener('statechange', function () { if (next.state === 'activated' || next.state === 'redundant') go(); });
+          if (next.state === 'activated') go();
+          setTimeout(go, 30000);
+        }).then(function (r) { log('a newer offline worker took over before the steps'); return r; });
+      });
+    }).then(function () {
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : 'not yet (the browser grants it to a site that is used or installed)')); }, function () {});
       return waitOnline().then(function () { return fetch('/__cb/manifest', { cache: 'no-store' }); }).then(function (r) { return r.json(); });

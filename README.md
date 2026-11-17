@@ -92,8 +92,36 @@ What the pilot does for them:
   (`sa-drain.html`, started by `boot.js` on any page) runs the engine's own upload queue as soon as the network is
   back: nobody presses anything.
 - **The Challenge's number games and Read aloud with no network**: the taps, or the recording, wait on the device and
-  the page shows its end card; back online they go to the run they were played in, or, when its two-hour token has
-  lapsed, to a fresh serve of the *same* questions or story. Other questions: nothing is sent, and the outbox says so.
+  the page shows its end card; back online they go to **the run they were played in, saying when they were played**
+  (`late: { at }`). Jugnu takes a late result for its own run after the run's two-hour token has lapsed and after
+  its row was closed, for 45 days (NIETE-Rumi #5015, two switches: see "A result that arrives late" below). Only
+  when the server refuses that does the device try a fresh serve of the *same* questions or story, as before. A
+  result the server will take neither way **stays on the device, with its recording**, and is offered again twice a
+  day; after 45 days it says `too_old` and the recording leaves the device. A run that already has its result
+  answers 409 and is done; a day's readings used up (429) waits six hours.
+- **Listen with no network** (18 Nov): the story's questions are not in the game's page. Jugnu hands them over after
+  the story (the same three choices for every run of a story, in an order of that run's own) and checks each answer
+  itself. The pilot keeps them **by story**: the first time a Chromebook meets a story, Get ready asks that run its
+  questions and answers it (first choice each) to learn which choice is right; that is kept for every child on that
+  Chromebook. After that Get ready only asks for a run and asks nothing of it, so on the server it is a run served
+  and not yet played. With no network the questions open, each answer is told right or wrong from the device, and
+  the answers wait; back online the run is asked for its own order of choices and each answer goes to it by the
+  words chosen.
+- **A run already played is never sent a later play.** The game kept for no network is one run. Played online, it
+  is finished: the pilot notes it, keeps a new run at once, and a play of the old one with no network goes to a
+  fresh run of the same questions. "Already done" (409) on a first try means the same; after an earlier try whose
+  answer was lost it is that very result, and is done.
+- **The pilot's own files on the device follow the pilot's release** (18 Nov). `boot.js`, `games-read.js`,
+  `cb-fit.css`, the start pages, the Get-ready steps and the battery page were only renewed when a page happened to
+  load them online, so a Chromebook that got ready in October went on running October's pilot code with no network.
+  The server now names its release (`GET /__cb/release`: a hash of every pilot file, and their addresses); the worker
+  reads all of them again whenever that differs from the release it last saved: on any page load with a network, on
+  every press of Get ready (finished steps are still skipped), and when a new worker takes over.
+- **What the pilot rewrites is never answered from an older pilot's copy** (`proxy-fresh.mjs`, 18 Nov). The server
+  changes Jugnu's pages and scripts on the way through but used to pass Jugnu's `ETag` along; the browser then asked
+  "only if changed", Jugnu said 304, and the browser kept the body an older pilot had made. A rewritten answer now
+  carries Jugnu's validator with the pilot's release stamp added, and only a validator of the current release is
+  passed back to Jugnu: a page load within one release still costs no download, and none is answered across two.
 - **A reading with no network gets its feedback on the Chromebook** (`games-read.js`, the speech scorer in
   `speech/`): the words Jugnu heard are lit and one to three stars are shown, never words a minute. On the Challenge
   page it appears under the page's own card; in the big flight, on the sea map's card after a part, for the stories
@@ -106,8 +134,13 @@ What the pilot does for them:
   pilot).
 - **The Chromebook's keyboard types** into Jugnu's number pads and letter strip (digits, letters, Backspace, Enter);
   Jugnu's screens take no key at all.
+- **The Challenge's screens fit the page too** (`boot.js`): they are sized for a phone held upright, and on a 633 px
+  page the number pad's 0 and delete, the microphone notice's OK and a result card's Home were below it. A screen
+  taller than the page is scaled down to it (never below 0.7); a screen with the passage to read aloud is left alone.
 - **The battery's screens fit a 1366×633 page** (`cb-fit.css`, added to `/sa/play.html`): Jugnu sizes any screen 600 px
-  or wider as a tall tablet, so the second row of answers and the keypad's 0 sat below the page.
+  or wider as a tall tablet, so the second row of answers and the keypad's 0 sat below the page. The last screen
+  arrived 48 px low: Jugnu's celebration (`wq-juice.js` `finish`) moves the whole page up from 48 px below while it
+  fades in, for 0.7 s; on this short page the move is switched off, the fade stays.
 
 What is proven on the laptop rig (17 Nov 2026; a Chromebook-shaped Chrome with a 1366×633 page, twenty sandbox test
 children, each in its own profile; not yet on a real Chromebook):
@@ -121,7 +154,7 @@ children, each in its own profile; not yet on a real Chromebook):
 | Numbers with Jugnu (dots) | en, ur | – | – | scored | played; scored on its own run after reconnect |
 | Number warm-up, Which is bigger? | – | en, ur | en, ur | scored | played; scored on their own runs after reconnect |
 | Read along, Read aloud | – | en, ur | en, ur | recorded, uploaded, scored | recorded on the device; uploaded and scored after reconnect |
-| Listen | – | en, ur | en, ur | scored | **the story plays, the questions do not open** (see below) |
+| Listen | – | en, ur | en, ur | scored | the story, its questions and each answer's right or wrong from the device; the answers scored on their own run after reconnect (18 Nov) |
 
 "Network off" is the server's OFFLINE switch **and** every browser offline: in the 46 minutes of the first offline
 run the server dropped 511 requests and answered none; while offline the database held nothing of the play; after
@@ -134,21 +167,61 @@ bigger, read along and read aloud 32 of 32, Listen 0 of 8. With no network a rea
 feedback from the device: English 36 of 36 and 63 of 63 words lit (three stars), Urdu 34 of 38 and 38 of 39 (the rig
 "read" with Jugnu's own recording of each story); never words a minute. After reconnect each recording was uploaded
 and scored by Jugnu. Evidence: `logs/matrix-offline-1/`, `-2/`, `-3-reads/` and `logs/evidence-*.txt` on the lane's
-machine (logs are not committed).
+machine (logs are not committed). In that run Listen was 0 of 8: the story played and the questions did not open.
+
+What was added and proven on 18 Nov (the same rig; sandbox):
+
+- **Listen with no network**: four children (Grade 3 in English and in Urdu, Grade 5 in English, Grade 4 in Urdu),
+  twice: the story, its three questions and the right or wrong of each answer all came from the device (the page
+  saw `ch/qs` and three `ch/qa` answered by the worker); after reconnect the answers went up by themselves and
+  Jugnu scored each run (12 answers a round). In the second round the devices already knew the stories: the runs
+  kept for no network had been asked nothing (Jugnu held them as served, not half-way) until the child's answers
+  arrived, and the pilot's server passed on no question and no answer before the reconnect (then 4 and 12).
+- **A result that arrives late**: five children whose saved games were 123 minutes old (so every token had lapsed)
+  played with no network: 16 results (8 number games, 8 readings with their recordings) were taken by the runs they
+  were played in. Jugnu's rows say so: served 18:31 UTC, played 20:32–20:34, received 20:34:45–58, `late`. Asked
+  through the pilot of the live sandbox with a lapsed token: 401 before the change and with the switches off; 200
+  with them on, 409 for the same result sent again; a row Jugnu's own sweeper had closed (served 25 hours before)
+  was scored and was the record again (`rig/games/late-live.mjs`).
+- **The pilot's release on the device**: a profile that got ready on the 30 October pilot held October's `boot.js`,
+  start page and battery page. After one online page load of this release (nothing pressed, 3 s) 15 of 15 pilot
+  files on the device were this release's, and with no network 15 of 15 were served from the device as such. A
+  later release with Get ready pressed again: the same, 7 s (`rig/games/release-check.mjs`). Before
+  `proxy-fresh.mjs` the battery page stayed October's.
+- **The last screen**: measured every frame. Before: the page 681 px and "Go back" ending at 663 px for 0.3 s, then
+  rising to 633 and 615 by 0.7 s. After: 633 and 615 from the first frame (Urdu and English homes).
+- **The Challenge's screens on the short page**: across the runs, 15 kinds of screen had a control below 633 px (the
+  warm-up's 0 and delete at 755–838 px, the microphone notice's OK at 760–812, a result card's Home at 754–881, the
+  read-along's pause at 772–990). After the scale-to-fit in `boot.js`: 21 games for five children (the dots in
+  Urdu; warm-up, bigger, read along, read aloud and listen, twice in English and twice in Urdu), nothing below the
+  page on any screen and no scrolling. (A first version left any screen with the story's words unscaled, and Urdu
+  Listen's done card stayed 776 px; only the screens read aloud from are left alone now.)
+- **A newer worker taking over in the middle of work** (a new pilot release reaching a device). Seen twice, both on
+  the first run after the worker's file changed: one "Which is bigger?" of 17 offline number games opened on "No
+  internet. Try again" at once, though the game was on the device; and Get ready's "Child home" step stopped with
+  "the child home did not open" for two children at the same moment, so nothing behind their Games door was saved.
+  Watching Get ready on a profile that still had the older worker showed why: the newer one waits behind the older
+  while Get ready keeps it busy, then takes over mid-way and cuts what the older one was answering. Get ready now
+  asks for the newer worker first and waits for it to be in charge before any step (watched: it took over, then the
+  home opened), and its home step reads the frame afresh and says what it showed. A game that starts in that moment
+  can still show "Try again" once: the worker replaces the old one at once by design (`skipWaiting`).
 
 What cannot be done by the pilot, and why:
 
-- **Listen with no network.** The story is on the device and plays; its questions and their answer choices are asked
-  of the server only after the story has been heard (`POST /api/wq/ch/qs` with the run's token), and each answer is
-  checked there (`ch/qa`). Nothing on the device holds them. Jugnu has to hand the questions over with the game.
+- **Listen's right answers without a practice run.** To know which choice is right with no network, the first
+  Chromebook to meet a story answers one practice run of it (first choice each time) at Get ready: a machine-made
+  practice row under the child who was picked. It is never a record, and once per story per Chromebook. Jugnu
+  handing the right choices over with the questions (to a device that prepares for offline) would remove it.
 - **The big flight's readings are not scored by Jugnu at all** (online too): a game recording is kept only with a
   consent value the game never sends, and no scorer reads a game run's recordings. Offline the pilot scores the
   stories on the device (feedback, and `device_read` on the task's result); whether Jugnu keeps and scores children's
   voices in the game is a consent decision for the people who run it.
-- A number game or a reading played offline is sent to the run it was played in for two hours (the life of its
-  token), then to a fresh serve of the same questions or story: always possible for the dots and the warm-up, within
-  a day of the last online visit for "Which is bigger?" and a reading. After that Jugnu serves other questions and the
-  play is not sent (the outbox says `questions_changed`). Jugnu should accept a late result for a served run.
+- **A result that arrives late, where Jugnu's switches are off.** Jugnu takes a late result only with
+  `web_quiz_challenge_late_result` on (and gives a closed row its record back only with
+  `web_quiz_challenge_late_record`). Both are on in the sandbox and **off everywhere else until the change is
+  promoted and someone turns them on**. With them off the device does what it did before (a fresh serve of the same
+  questions for two hours to a day), and anything not taken stays on the device and is offered again twice a day
+  for 45 days, so a switch turned on later still collects it.
 - The Big flight can be flown once a month: a second one flown offline is refused when it is sent (409) and stays on
   the device.
 
@@ -343,11 +416,13 @@ The learning games need these in Jugnu itself (the pilot covers each today, on i
   back (`dashboard/sa/sink-game.js` already has `forGame`; the map page does not use it), and send from any page.
 - The way back to the sea map with no network (`sa-engine.js` waits for a HEAD of the map to answer).
 - The battery worker asked to keep all six batteries when the game is first opened, not one part at a time.
-- Listen's questions handed over with the game; a late result accepted for a served run (number games, readings).
+- Listen's questions and right choices handed over with the game. A late result accepted for the run it was played
+  in is done in Jugnu (NIETE-Rumi #5015, sandbox): it needs promoting, and the two switches turned on.
 - A decision on keeping and scoring children's readings in the big flight (today: recorded, dropped, never scored).
 - Uploads of recordings from any origin Jugnu is served from (the bucket's CORS names one).
-- The last battery screen's "Go back" 48 px below a 633 px page; the Challenge's microphone notice and read-along
-  controls just under it.
+- The celebration that starts a page 48 px low (`wq-juice.js` `finish` on the whole page): fine on a tall phone,
+  below the page on a short one. The Challenge page's own layout for a wide, short screen (the pilot scales each
+  screen down to the page; a layout that uses the width would keep the keys full size).
 
 ## What we learned
 
@@ -364,6 +439,13 @@ The learning games need these in Jugnu itself (the pilot covers each today, on i
   straight to the bucket has to go through the pilot's server.
 - **A rig that jumps from one game to the next by address can skip a game**: two addresses that differ only after
   "#" do not load a page. Come to each game the way a child does, or leave the page first.
+- **A proxy that changes a page must not pass the page's validators along.** "Not changed" is true of Jugnu's page
+  and false of the pilot's copy of it: a Chromebook kept October's battery page (without the Chromebook sheet) for as
+  long as Jugnu's own page stayed the same.
+- **A result belongs to the run it was played in.** Looking for "the same questions again" works for an hour or a
+  day; the run's own token, lapsed, still names the run, the child and the game, and the server can take it.
+- **A measure taken at the first frame is not the screen.** "Go back 48 px below the page" was the first frame of a
+  0.7 s entrance; measure a screen when it has stopped moving, and measure the frames if the start matters.
 
 - **Guest mode erases everything when the session ends** (exit, restart, shutdown, flat battery). Nothing saved in
   Guest survives a restart. A shared school account per school, signed in once on each Chromebook, keeps everything
