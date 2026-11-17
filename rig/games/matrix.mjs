@@ -172,7 +172,9 @@ try {
     const errs = [...new Set(k.log.filter((l) => !/favicon|\/api\/wq\/e\b/.test(l)))];
     k.out.page_errors = errs.filter((l) => /pageerror/.test(l)).slice(-10);
     k.out.http_errors = errs.filter((l) => /\[http /.test(l)).slice(-15);
+    k.out.failed_requests = errs.filter((l) => /\[failed\]/.test(l) && !/\/__cb\/sw\.js|\/api\/wq\/e\b/.test(l)).slice(-25);   // requests that got no answer at all
     k.say(`-- page errors ${k.out.page_errors.length}; 4xx/5xx ${k.out.http_errors.length}: ${k.out.http_errors.slice(-6).join(' ; ')}`);
+    if (k.out.failed_requests.length) k.say(`-- requests with no answer ${k.out.failed_requests.length}: ${k.out.failed_requests.slice(-8).join(' ; ')}`);
     save(k);
     const f = k.out.flight, c = k.out.challenge;
     console.log(`${k.key.padEnd(9)} G${k.grade} ${k.lang} ${mode}: flight ${f.filter((x) => x.ok).length}/${f.length} parts ok [${f.map((x) => `${x.part}:${x.ok ? 'ok' : 'FAIL'}`).join(' ')}] · challenge ${c.filter((x) => x.ok).length}/${c.length} ok [${c.map((x) => `${x.item}:${x.ok ? 'ok' : 'FAIL'}`).join(' ')}]${k.out.reconnect ? ' · left waiting: ' + ((k.out.reconnect.outbox || []).filter((x) => x.state !== 'sent').length) : ''}`);
