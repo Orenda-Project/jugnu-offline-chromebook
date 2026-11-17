@@ -33,13 +33,14 @@ Chromebook was off the network that day; every line below is a script in `rig/` 
 
 | Test | Result |
 |---|---|
-| **The child home never goes stale** (`rig/home-check.mjs`, 14 checks; `--expiry`, 9 checks) | The server signs each Chromebook its own home link. An **expired** link opened online is sent to a freshly signed one and the home opens. With the network off and **every link on the device expired** (the stored one and the one inside each saved page), `/cb/home`, the Stories door and a different expired link all open from the saved copy; nothing reached the server. Back online: a fresh link. A link locked to another device recovers by itself |
-| **Get ready** (`rig/ready-check.mjs`) | Fresh device: 130 s, 1,999 files confirmed on the drive, 0 missing. Closed and reopened in the middle: it carried on from the step that was running. Pressed again on a ready device: 21 s. A quiz its teacher had closed and 126 storybook sound files the server does not have were named, not silently skipped |
-| **Lesson videos** (`ready/videos.js`, `rig/videos-check.mjs`) | Class 2: all 82 lessons (604 MB of video, 5,815 quiz voice clips, 77 MB) saved in about 9½ minutes at ~1 MB/s. With the network off: a Class 2 child is picked, the Videos door opens on Class 2 with all 82 lessons, lessons from across the class **play from the saved copy and scrub ahead** (1280×720), and the questions after each open. Nothing came from the server or from R2 |
-| **Check this Chromebook** (the start page's button; `rig/ready-check.mjs --check --check-offline`) | 106 things opened from the device alone in under a minute (start page, Who's playing?, home, three doors, quiz, games, 10 storybooks, 82 lesson videos each opened by a real player), the same with the network truly off (0 requests answered) |
-| **The check finds things** (`rig/check-finds.mjs`) | A lesson's video, a storybook's page picture and the Games door's list were deleted from the drive: the check named each. Get ready again put them back; the check was clean |
+| **The child home never goes stale** (`rig/home-check.mjs`, 14 of 14; `--expiry`, 9 of 9) | The server signs each Chromebook its own home link. An **expired** link opened online is sent to a freshly signed one and the home opens. With the network off and **every link on the device expired** (the stored one and the one inside each saved page), `/cb/home`, the Stories door and a different expired link all open from the saved copy; nothing reached the server. Back online: a fresh link. A link locked to another device recovers by itself. On a server that cannot sign (`rig/nokey-check.mjs`, 4 of 4) an expired link still opens the saved home |
+| **Get ready** (`rig/ready-check.mjs`) | Fresh device, closed and reopened in the middle: it carried on from the step that was running and said "Ready" with 3,072 files confirmed on the drive, 0 missing (a run with no interruption: 130 s). Pressed again on a ready device: about 100 s, 9,801 files confirmed. A quiz its teacher had closed was named, not silently skipped |
+| **Lesson videos** (`ready/videos.js`, `rig/videos-check.mjs`, 14 of 14) | Class 2: all 82 lessons (604 MB of video, 5,815 quiz voice clips, 77 MB) saved in 9½–12 minutes at about 1 MB/s. With the network off: a Class 2 child is picked, the Videos door opens on Class 2 with all 82 lessons and their pictures, lessons from across the class **play from the saved copy and scrub ahead** (1280×720), and the questions after each open. Nothing came from the server or from R2 |
+| **Check this Chromebook** (the start page's button; `rig/ready-check.mjs --check --check-offline`) | 112 things opened from the device alone in about 75 s (start page, Who's playing?, home, three doors, quiz, 6 games, 11 storybooks, 82 lesson videos each opened by a real player), and the same with the network truly off (0 requests answered) |
+| **The check finds things** (`rig/check-finds.mjs`, 7 of 7) | A lesson's video, a storybook's page picture and the Games door's list were deleted from the drive: the check named each. Get ready again put them back; the check was clean |
+| **Storybook option voices** (`npm test`) | The first Get ready with honest counts showed 126 storybook sound files "not on the server". Cause: the file-name pattern cut `q1o2-….ogg` down to `o2-….ogg`. Fixed: 356 files for 11 books (was 206), none missing |
 | **Room on the drive** (`rig/storage-audit.mjs`) | Class 2 with everything else: 731 MB really on the drive, 740 MB charged by the browser. (Before the fix, 82 lesson pictures kept as unreadable copies were charged 572 MB.) |
-| **A picked child's own home** (`rig/perchild-check.mjs`, `HOME_PER_CHILD=1`) | A class-list child Jugnu knows gets a home signed for them alone; one Jugnu does not know gets this Chromebook's home, with no empty page in between. Not yet shown with two different real children: sandbox has no class list whose ids are its own students |
+| **A picked child's own home** (`rig/perchild-check.mjs`, 6 of 6, `HOME_PER_CHILD=1`) | A class-list child Jugnu knows gets a home signed for them alone; one Jugnu does not know gets this Chromebook's home, with no empty page in between. Not yet shown with two different real children: sandbox has no class list whose ids are its own students |
 
 ## Who's playing? (class lists on a shared Chromebook)
 
@@ -123,7 +124,7 @@ not reach the worker's requests. `rm OFFLINE` to come back.
 
 Home, Get ready and videos (each prints PASS/FAIL lines; `P=<private folder> sh rig/serve.sh` runs the server
 with its secrets): `node rig/home-check.mjs` (an expired home link online and with no network; `--expiry` against a
-server run with `HOME_TTL_S=40`); `node rig/ready-check.mjs --videos 2 --interrupt --check --check-offline` (Get ready
+server run with `HOME_TTL_S=40`; `rig/nokey-check.mjs` against a server with no key); `node rig/ready-check.mjs --videos 2 --interrupt --check --check-offline` (Get ready
 with Class 2's lesson videos, the page closed half-way, then Check this Chromebook); `node rig/videos-check.mjs 2`
 (with no network: Who's playing?, the Videos door, lessons played and scrubbed, the questions after);
 `node rig/videos-sizes.mjs` (lesson video sizes per class); `npm test` (the link signer).
@@ -195,9 +196,9 @@ The remaining work is filed as issues in this repo. In short:
   82 lesson pictures cost 572 MB of room. Anything from Jugnu's media store is now fetched through this site.
 - **"The same address with a different `?…`" is not the same list.** A missing Games list was being answered with
   the Stories list. Door lists are now answered only by a saved copy of the same question.
-- **Silent skips hide for weeks.** 126 storybook sound files the server does not have, and a quiz closed by its
-  teacher, were being "saved" without a word. Get ready now names what it could not save and why; Check this
-  Chromebook opens everything from the device alone.
+- **Silent skips hide for weeks.** 126 storybook option voices asked for under names cut short (404), and a quiz
+  closed by its teacher, were being "saved" without a word. Get ready now names what it could not save and why;
+  Check this Chromebook opens everything from the device alone.
 - **A server change needs a server restart.** With an old server running, Jugnu answered the new video route with
   a web page (`200 text/html`), and each "video" was saved as 16 KB of HTML. The worker now only saves what this
   site's own media route answered, and never a web page.
