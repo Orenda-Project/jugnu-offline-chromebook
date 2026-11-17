@@ -48,7 +48,9 @@ const look = (page) => page.evaluate(() => {
   try { v = e && e.runner ? e.runner.view() : null; } catch (x) { v = null; }
   const vis = (b) => b && b.offsetParent !== null;
   const box = (b) => { const r = b.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2), Math.round(r.width), Math.round(r.height)]; };
-  const ctl = (sel) => [...document.querySelectorAll(sel)].filter(vis).map((b) => ({ t: (b.innerText || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 30), al: b.getAttribute('aria-label') || '', v: b.getAttribute('data-value'), k: b.getAttribute('data-key'), i: b.getAttribute('data-i'), dis: !!b.disabled, hid: b.hasAttribute('hidden'), box: box(b), cls: String(b.className) }));
+  // is the control really the thing under its own middle? (a fixed bar or a "scroll down" cue can lie over it)
+  const hit = (b) => { const r = b.getBoundingClientRect(); const x = r.left + r.width / 2, y = r.top + r.height / 2; if (y < 0 || y >= innerHeight || x < 0 || x >= innerWidth) return false; const e = document.elementFromPoint(x, y); return !!e && (e === b || b.contains(e)); };
+  const ctl = (sel) => [...document.querySelectorAll(sel)].filter(vis).map((b) => ({ hit: hit(b), t: (b.innerText || b.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().slice(0, 30), al: b.getAttribute('aria-label') || '', v: b.getAttribute('data-value'), k: b.getAttribute('data-key'), i: b.getAttribute('data-i'), dis: !!b.disabled, hid: b.hasAttribute('hidden'), box: box(b), cls: String(b.className) }));
   const t = v && v.task;
   const mount = document.getElementById('sae-root');
   const scr = mount && mount.querySelector('.sae-screen');
@@ -69,11 +71,27 @@ const look = (page) => page.evaluate(() => {
   };
 }).catch(() => null);
 
-const click = async (page, c) => { await page.mouse.click(c.box[0], c.box[1]); };
+// A click where the control is. One below (or above) the fold cannot be clicked: the child has to scroll first, and
+// so does the rig (a wheel turn), counted in scrolls{} — on a 1366x633 Chromebook page that is a layout that does not fit.
+const scrolls = {};
+let viewH = 633;
+let where = '';
+const click = async (page, c) => {
+  if (c.hit === false) {
+    // below the page, or under a fixed bar: a turn of the wheel over the screen, then look again
+    scrolls[where] = (scrolls[where] || 0) + 1;
+    await page.mouse.move(683, Math.round(viewH / 2));
+    await page.mouse.wheel(0, c.box[1] > viewH / 2 ? 220 : -220);
+    await page.waitForTimeout(380);
+    return 'scrolled';
+  }
+  await page.mouse.click(c.box[0], c.box[1]);
+  return 'clicked';
+};
 const usable = (list) => (list || []).filter((c) => !c.dis && !c.hid && c.box[2] > 4 && c.box[3] > 4);
 
 export async function playPart(page, opts = {}) {
-  const o = { lang: 'en', say: () => {}, trace: false, speakMs: 9000, answerMs: 2500, wrongFirst: 0, maxMs: 25 * 60 * 1000, tag: 'part', shots: true, ...opts };
+  const o = { lang: 'en', say: () => {}, trace: false, speakMs: 9000, answerMs: 2500, wrongFirst: 0, maxMs: 25 * 60 * 1000, tag: 'part', shots: true, keys: false, ...opts };
   const t0 = Date.now();
   const report = { tasks: [], anomalies: [], phases: {}, layout: [], shots: [] };
   // which check word a clip says (the sound check: "tap the picture Jugnu says")
@@ -93,6 +111,7 @@ export async function playPart(page, opts = {}) {
     const key = `${s.phase}|${s.task && s.task.id}|${s.ii}|${s.cell}|${s.scrCls}|${s.primary.map((c) => c.t + c.dis).join()}|${s.opts.length}|${s.keys.length}|${s.typed}`;
     if (key !== lastKey) { lastKey = key; lastChange = Date.now(); }
     const tid = s.task ? s.task.id : null;
+    viewH = s.h; where = `${tid || s.phase}:${s.phase}`;
     if (s.phase && tid && (!cur || cur.id !== tid)) {
       cur = { id: tid, mode: s.task.mode, kind: s.task.kind, timed: s.task.lim, items: 0, phases: [], at: Date.now() };
       report.tasks.push(cur);
@@ -105,7 +124,9 @@ export async function playPart(page, opts = {}) {
     if (!seen.has(stamp)) {
       seen.add(stamp); n += 1;
       if (s.sw > s.w + 1) anomaly(`sideways scroll on ${stamp}: page ${s.sw}px wide in a ${s.w}px window`);
-      report.layout.push({ at: stamp, sh: s.sh, h: s.h });
+      // a control is "cut off" when its lower edge is below the page or something lies over its middle
+      const cut = ['opts', 'keys', 'pics', 'primary', 'next', 'star', 'words', 'mic'].map((k) => [k, (s[k] || []).filter((c) => !c.hid && !c.dis && c.box[3] > 4 && (c.box[1] + c.box[3] / 2 > s.h + 1 || c.hit === false)).length, (s[k] || []).length]).filter((x) => x[1] > 0).map((x) => `${x[1]} of ${x[2]} ${x[0]}`);
+      report.layout.push({ at: stamp, sh: s.sh, h: s.h, cut });
       if (o.shots) report.shots.push(await shot(page, `${o.tag}-${String(n).padStart(2, '0')}-${String(s.phase)}-${(tid || '').replace(/\W/g, '_')}`));
       if (o.trace) o.say(`   [${stamp}] ${s.text}`);
     }
@@ -150,7 +171,7 @@ export async function playPart(page, opts = {}) {
             if (s.opts.length && it) {
               let want = usable(s.opts).find((c) => String(c.v) === String(it.target));
               if (s.phase === 'running' && wrongLeft > 0) { const w = usable(s.opts).find((c) => String(c.v) !== String(it.target)); if (w) { want = w; wrongLeft -= 1; } }
-              if (want) { if (s.phase === 'running') cur.items += 1; return click(page, want); }
+              if (want) { const did = await click(page, want); if (did === 'clicked' && s.phase === 'running') cur.items += 1; return did; }
               return null;
             }
             if (s.words.length && it && typeof it.ti === 'number') { const w = usable(s.words).find((c) => Number(c.i) === it.ti); if (w) return click(page, w); }
@@ -165,12 +186,14 @@ export async function playPart(page, opts = {}) {
             const have = (s.typed || '').replace(/[^0-9a-z]/gi, '').toLowerCase();
             const goal = want.toLowerCase();
             if (have === goal) {
+              if (o.keys) { if (s.phase === 'running') cur.items += 1; typedFor = `${tid}|${s.ii}`; await page.keyboard.press('Enter'); return null; }
               const ok = usable(s.keys).find((x) => x.k === 'ok');
               if (ok) { if (s.phase === 'running') { cur.items += 1; if (wrongLeft > 0) wrongLeft -= 1; } typedFor = `${tid}|${s.ii}`; return click(page, ok); }
               return prim ? click(page, prim) : null;
             }
             if (!goal.startsWith(have)) { const del = usable(s.keys).find((x) => x.k === 'del'); return del ? click(page, del) : null; }
             const ch = goal.charAt(have.length);
+            if (o.keys) { await page.keyboard.press(ch); return null; } // the Chromebook's own keyboard
             const k = usable(s.keys).find((x) => x.k === ch);
             if (k) return click(page, k);
             return prim ? click(page, prim) : null;
@@ -211,6 +234,8 @@ export async function playPart(page, opts = {}) {
   report.end = await look(page);
   report.fit = await fit(page);
   report.ms = Date.now() - t0;
+  report.scrolls = { ...scrolls };
+  for (const k of Object.keys(scrolls)) delete scrolls[k];
   return report;
 }
 

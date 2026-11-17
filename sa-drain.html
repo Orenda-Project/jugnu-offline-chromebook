@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jugnu: sending what was played</title>
+<!-- Pilot page (not part of Jugnu), opened in a hidden frame by boot.js when there is a network: sends what earlier
+     parts of Jugnu's big flight left on this Chromebook (answers, results, recordings), each through the run it was
+     played in. The battery engine sends only from its own page (/sa/play.html), so a child who finished with no
+     network and is now on the home would otherwise send nothing until the next island is opened. It is the engine's
+     own store, upload queue and game sink that do the work; this page only starts them for every run with something
+     unsent. Tells the opener {type:'cb:drained', sessions:[{s, state, pending_events, pending_audio}]}. -->
+<script src="/sa/sa-store.js"></script>
+<script src="/sa/sa-sync.js"></script>
+<script src="/sa/sink-game.js"></script>
+</head>
+<body>
+<script>
+(function () {
+  'use strict';
+  var SAE = window.SAE || {};
+  function tell(m) { m.type = 'cb:drained'; try { if (window.parent && window.parent !== window) window.parent.postMessage(m, location.origin); } catch (e) { /* no opener */ } window.__cbDrained = m; }
+  if (!SAE.store || !SAE.sync || !SAE.sinkGame) { tell({ sessions: [], why: 'engine_not_loaded' }); return; }
+  SAE.store.open().then(function (st) {
+    return st.sessions().then(function (rows) {
+      var ids = (rows || []).filter(function (r) { return r && r.session_id && r.mode === 'game'; }).map(function (r) { return r.session_id; });
+      var out = [];
+      return ids.reduce(function (chain, id) {
+        return chain.then(function () { return st.pending(id); }).then(function (p) {
+          var audio = p.chunks.filter(function (c) { return c.final; }).length;
+          if (!p.events.length && !p.results.length && !audio) return null;
+          var sink = SAE.sinkGame.create({ session_id: id });
+          if (!sink) { out.push({ s: id, state: 'no_sink', pending_events: p.events.length + p.results.length, pending_audio: audio }); return null; }
+          var sy = SAE.sync.create({ store: st, sink: sink, session_id: id });
+          return sy.flush().then(function (s) {
+            if (sy.stop) sy.stop();
+            out.push({ s: id, state: s.state, pending_events: s.pending_events, pending_audio: s.pending_audio });
+          }, function (e) { out.push({ s: id, state: 'error', why: String(e && e.message || e).slice(0, 80) }); });
+        });
+      }, Promise.resolve()).then(function () { return out; });
+    });
+  }).then(function (out) { tell({ sessions: out }); }, function (e) { tell({ sessions: [], why: String(e && e.message || e).slice(0, 120) }); });
+}());
+</script>
+</body>
+</html>

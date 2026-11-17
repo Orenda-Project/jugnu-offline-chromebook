@@ -116,7 +116,7 @@ export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js')
     message(data) {
       return new Promise((ok) => {
         const waits = [];
-        const port = { postMessage: (m) => ok(m) };
+        const port = { postMessage: (m) => ok(JSON.parse(JSON.stringify(m))) }; // a real port hands over a copy
         for (const fn of listeners.message || []) fn({ data, ports: [port], waitUntil(p) { waits.push(p); } });
         Promise.all(waits).then(() => setTimeout(() => ok(undefined), 20));
       });

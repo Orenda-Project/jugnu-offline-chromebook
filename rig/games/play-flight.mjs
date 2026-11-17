@@ -15,6 +15,8 @@ if (!kid) { console.error('no such child: ' + who); process.exit(1); }
 const off = !!flag('offline', false);
 const { ctx, page, log } = await launch({ wav: path.join(ROOT, 'logs/speech', `${kid.lang}.wav`) });
 const say = (s) => console.log(s);
+// --nofit: Jugnu's own layout, without the pilot's Chromebook-page sheet (the "before" of that fix)
+if (flag('nofit', false)) await ctx.addInitScript(() => { const off = () => document.querySelectorAll('link[href*="cb-fit.css"]').forEach((l) => { l.disabled = true; }); document.addEventListener('DOMContentLoaded', off); setInterval(off, 500); });
 let failed = false;
 try {
   if (off) await offline(ctx, true);
@@ -26,9 +28,13 @@ try {
     const st = await startPart(page, part);
     if (!st.started) { say(`${part}: did not start — ${st.text}`); failed = true; continue; }
     say(`\n# ${part}: ${st.stones.length} stones — ${st.url.slice(0, 110)}`);
-    const r = await playPart(page, { lang: kid.lang, say, trace: !!flag('trace', false), speakMs: Number(flag('speak', 9000)), wrongFirst: Number(flag('wrong', 0)), maxMs: Number(flag('max', 25)) * 60000, tag: `fl-${who}-${part}${off ? '-off' : ''}` });
+    const r = await playPart(page, { lang: kid.lang, say, trace: !!flag('trace', false), keys: !!flag('keys', false), speakMs: Number(flag('speak', 9000)), wrongFirst: Number(flag('wrong', 0)), maxMs: Number(flag('max', 25)) * 60000, tag: `fl-${who}-${part}${off ? '-off' : ''}` });
     say(`  results: ${r.results.map((x) => `${x.task.replace(/^(ma|en|ur)\./, '$1.')}=${x.stop}${x.correct != null ? `(${x.correct}/${x.attempted})` : ''}${x.audio ? '[' + x.audio + ']' : ''}`).join('  ')}`);
     say(`  sounds: ${r.media.played}/${r.media.tried} played${r.media.failed.length ? ' — FAILED: ' + r.media.failed.join(', ') : ''}`);
+    const sc = Object.entries(r.scrolls || {});
+    say(`  scrolling a child must do to reach a control: ${sc.length ? sc.reduce((a, [, n]) => a + n, 0) + ' wheel turns — ' + sc.slice(0, 8).map(([k, n]) => k + ' ×' + n).join(', ') : 'none'}`);
+    const cut = r.layout.filter((l) => l.cut && l.cut.length);
+    say(`  screens with a control cut off by the 633 px page: ${cut.length ? cut.length + ' — ' + cut.slice(0, 10).map((l) => l.at.replace('sae-screen.', '') + ' [' + l.cut.join(', ') + '] ' + l.sh + 'px').join(' ; ') : 'none'}`);
     say(`  time: ${Math.round(r.ms / 1000)} s · sync dot: ${r.sync} · tallest screen ${Math.max(...r.layout.map((l) => l.sh))}px in a ${r.layout[0] ? r.layout[0].h : '?'}px page · anomalies: ${r.anomalies.length ? r.anomalies.join(' | ') : 'none'}`);
     if (r.anomalies.length) failed = true;
     const back = await backToMap(page, { waitMs: off ? 20000 : 30000 });

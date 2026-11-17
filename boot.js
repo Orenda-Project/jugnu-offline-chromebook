@@ -150,4 +150,58 @@
   window.addEventListener('offline', refresh);
   setInterval(refresh, 5000);
   document.addEventListener('DOMContentLoaded', refresh);
+
+  /* ---- games lane (bd-fc5mgd.13.2): Jugnu's big flight ---- */
+  (function gamesLane() {
+    // One offline worker: Jugnu's own battery worker (scope /sa/) would take /sa/ pages away from the pilot worker
+    // (no way back to the map and nothing sent later for a part started with no network). Remove it where it is.
+    try {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        rs.forEach(function (r) { if (/\/sa\/$/.test(r.scope)) r.unregister(); });
+      }, function () {});
+    } catch (e) { /* an old browser: the stand-in at /sa/sw.js removes it */ }
+
+    // The sea map has no way home of its own (on a phone the child goes back to WhatsApp).
+    function mapHome() {
+      var hub = null;
+      try { hub = localStorage.getItem('cb-hub'); } catch (e) {}
+      if (!hub || !/^\/sa-game\//.test(location.pathname) || document.querySelector('[data-cb-home]') || !document.body) return;
+      var a = document.createElement('a');
+      a.setAttribute('data-cb-home', '');
+      a.href = '/h/' + hub + '?from=home';
+      a.textContent = '⌂ Home';
+      a.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483647;padding:10px 16px;border-radius:999px;' +
+        'background:#1f2937;color:#fff;font:600 15px/1 system-ui,sans-serif;text-decoration:none;box-shadow:0 2px 6px rgba(0,0,0,.25)';
+      document.body.appendChild(a);
+    }
+    document.addEventListener('DOMContentLoaded', mapHome);
+    setTimeout(mapHome, 1500);
+
+    // What earlier parts left on this Chromebook goes up by itself when there is a network: a hidden frame runs the
+    // battery engine's own upload queue for every run with something unsent (sa-drain.html). Not on the child's
+    // own page (/sa/play.html sends for itself), and only when this device has ever played a part.
+    var draining = false;
+    function played() { try { for (var i = 0; i < localStorage.length; i += 1) if (/^sg\.st\./.test(localStorage.key(i))) return true; } catch (e) {} return false; }
+    function drain() {
+      if (draining || !navigator.onLine || !document.body || /^\/sa\/play\.html/.test(location.pathname) || /^\/__cb\//.test(location.pathname) || !played()) return;
+      draining = true;
+      var f = document.createElement('iframe');
+      f.setAttribute('aria-hidden', 'true');
+      f.style.cssText = 'position:absolute;width:0;height:0;border:0;left:-9999px';
+      f.src = '/__cb/sa-drain';
+      var done = function () { if (f.parentNode) f.parentNode.removeChild(f); draining = false; };
+      window.addEventListener('message', function onMsg(e) {
+        if (e.origin !== location.origin || !e.data || e.data.type !== 'cb:drained') return;
+        window.removeEventListener('message', onMsg);
+        window.__cbDrained = e.data;
+        try { fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ games_sent: e.data.sessions || [], why: e.data.why || null }) }).catch(function () {}); } catch (x) { /* a report only */ }
+        done();
+      });
+      setTimeout(done, 120000);
+      document.body.appendChild(f);
+    }
+    window.__cbDrain = drain;
+    window.addEventListener('online', function () { setTimeout(drain, 1500); });
+    setTimeout(drain, 3500);
+  }());
 }());

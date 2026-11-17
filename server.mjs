@@ -67,6 +67,12 @@ const LOCAL = {
   '/hello': ['hello.html', 'text/html; charset=utf-8'], // the device check: model, ChromeOS/Chrome version, memory
   '/cb': ['cb.html', 'text/html; charset=utf-8'], // the Chromebook test page: Get ready for offline, then play
   '/who': ['who.html', 'text/html; charset=utf-8'], // who's playing: class > section > name, search, add me
+  // games lane: one offline worker. Jugnu's battery worker (scope /sa/) is replaced by a stand-in that removes
+  // itself, so /sa/ pages are the pilot worker's (see pilot-sw.js, GAMES LANE); and the page that sends what the
+  // big flight left on the device.
+  '/sa/sw.js': ['sa-sw-off.js', 'application/javascript; charset=utf-8'],
+  '/__cb/sa-drain': ['sa-drain.html', 'text/html; charset=utf-8'],
+  '/__cb/cb-fit.css': ['cb-fit.css', 'text/css; charset=utf-8'], // the battery's screens fitted to a 1366x633 page
 };
 /** The Get-ready step files in ready/, in name order. */
 function readyList() {
@@ -207,6 +213,8 @@ const server = http.createServer((req, res) => {
         text = rewriteText(text, ownOrigin);
         if (/^text\/html/i.test(type)) {
           text = /<\/head>/i.test(text) ? text.replace(/<\/head>/i, `${BOOT_TAG}</head>`) : BOOT_TAG + text;
+          // games lane: the battery's own sheet sizes a wide screen as a tall tablet; a Chromebook page is short
+          if (url.pathname === '/sa/play.html') text = text.replace(/<\/head>/i, '<link rel="stylesheet" href="/__cb/cb-fit.css"></head>');
           // the boot script is same-origin; a CSP that names 'self' already allows it
         }
         const body = Buffer.from(text, 'utf8');
