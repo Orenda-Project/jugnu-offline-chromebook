@@ -94,6 +94,13 @@ What the pilot does for them:
 - **The Challenge's number games and Read aloud with no network**: the taps, or the recording, wait on the device and
   the page shows its end card; back online they go to the run they were played in, or, when its two-hour token has
   lapsed, to a fresh serve of the *same* questions or story. Other questions: nothing is sent, and the outbox says so.
+- **A reading with no network gets its feedback on the Chromebook** (`games-read.js`, the speech scorer in
+  `speech/`): the words Jugnu heard are lit and one to three stars are shown, never words a minute. On the Challenge
+  page it appears under the page's own card; in the big flight, on the sea map's card after a part, for the stories
+  read aloud in that part (the battery's own screens show a child no score, and are not changed). The recording is
+  kept and goes to Jugnu's scorer when the network is back; letter sounds and Urdu word lists are never scored here.
+- **A home link that renews itself** (the HOME block) does not lose the games: the sea map and the Challenge pages
+  are filed under the home's children, a part's start and the outbox send the live link.
 - **A recording's upload goes through the pilot's server** (`/__cb/r2put`): Jugnu's storage bucket accepts a browser's
   upload only from Jugnu's own site, so through the pilot every reading's upload was refused (also on the deployed
   pilot).

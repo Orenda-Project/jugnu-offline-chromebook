@@ -10,6 +10,8 @@ if (!kid) { console.error('no such child: ' + who); process.exit(1); }
 const { ctx, page, log } = await launch();
 const t0 = Date.now();
 try {
+  // the device key first (its own visit: the start page drops the rest of the address when it takes a key)
+  if (process.env.CB_DEVICE_KEY) await page.goto(`${BASE}/cb?key=${encodeURIComponent(process.env.CB_DEVICE_KEY)}`, { waitUntil: 'load', timeout: 60000 });
   await page.goto(`${BASE}/cb?hub=${kid.token}`, { waitUntil: 'load', timeout: 60000 });
   await page.waitForTimeout(1500);
   await page.click('#ready');

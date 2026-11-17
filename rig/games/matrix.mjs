@@ -104,6 +104,8 @@ async function challenge(k, off) {
 
 async function getReady(k) {
   const t0 = Date.now();
+  // the device key first (its own visit: the start page drops the rest of the address when it takes a key)
+  if (process.env.CB_DEVICE_KEY) await k.page.goto(`${BASE}/cb?key=${encodeURIComponent(process.env.CB_DEVICE_KEY)}`, { waitUntil: 'load', timeout: 60000 });
   await k.page.goto(`${BASE}/cb?hub=${k.token}`, { waitUntil: 'load', timeout: 60000 });
   await k.page.waitForTimeout(1500);
   await k.page.click('#ready');

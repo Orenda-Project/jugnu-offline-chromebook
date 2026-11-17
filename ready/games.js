@@ -24,7 +24,11 @@
       return missing;
     };
     const keep = async (urls, label, from, to) => {
-      await inChunks(urls, 120, async (c, i) => { setPct(from + (to - from) * (i / Math.max(1, urls.length)), `Saving ${label} (${i} of ${urls.length})…`); await warm(c); });
+      await inChunks(urls, 120, async (c, i) => {
+        setPct(from + (to - from) * (i / Math.max(1, urls.length)), `Saving ${label} (${i} of ${urls.length})…`);
+        const r = await warm(c);
+        if (r && r.failed && r.failed.length) log(`${label}: ${r.failed.length} could not be saved (e.g. ${String(r.failed[0]).split('?')[0].split('/').slice(-3).join('/')})`);
+      });
     };
 
     // ---- 0. one offline worker: Jugnu's own battery worker (scope /sa/) and its copies go ----
@@ -66,7 +70,9 @@
     files = uniq(files);
     const timings = O ? uniq(O.timingUrls(files)) : [];
     await keep(files, "Jugnu's big flight", 95, 97);
-    await keep(timings, 'the word timings', 97, 97.5); // best effort: not every clip has one
+    // the clips' word timings, best effort and quietly: only some clips have one, the battery does not say which, so
+    // these go to the worker's own "keep these" (a 404 there is not a file Get ready meant to save)
+    await inChunks(timings, 200, async (c) => { await ask({ type: 'prepare', urls: c }, 180000); });
     const missing = await notKept(files);
     if (missing.length) { await warm(missing); }
     const still = missing.length ? await notKept(missing) : [];

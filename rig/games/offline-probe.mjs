@@ -21,6 +21,7 @@ try {
   fs.rmSync(FLAG, { force: true });
   if (flag('ready', false)) {
     const t0 = Date.now();
+    if (process.env.CB_DEVICE_KEY) await page.goto(`${BASE}/cb?key=${encodeURIComponent(process.env.CB_DEVICE_KEY)}`, { waitUntil: 'load', timeout: 60000 });
     await page.goto(`${BASE}/cb?hub=${token}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(1500);
     await page.click('#ready');
