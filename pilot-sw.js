@@ -298,10 +298,6 @@ function homeState() {
 function homeSave() {
   return caches.open(KEEP).then(function (c) { return c.put(HUB_KEY, new Response(JSON.stringify(homeMem || {}), { headers: { 'Content-Type': 'application/json' } })); }).catch(function () {});
 }
-// The record is read once, as the worker starts, so a request for the home never waits on the drive. (18 Nov 2026: a
-// home page asked of a worker that a newer version was about to replace waited 1.7 s for this read, on a drive
-// holding 800 MB; the newer worker took over first and the request was never answered: a blank frame in Get ready.)
-homeState();
 function homeTell(msg) {
   return self.clients.matchAll({ includeUncontrolled: true }).then(function (cs) { cs.forEach(function (c) { c.postMessage(msg); }); }).catch(function () {});
 }

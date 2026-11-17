@@ -1,18 +1,24 @@
-// A new version of the offline worker takes over while Get ready is starting (the pilot was deployed since this
-// Chromebook last opened it). Found on the rig, 18 Nov 2026: Get ready registers the worker, which is when Chrome
-// fetches the new file; about two seconds later the "Child home" step opens the home in a hidden frame. When that
-// request reached the OUTGOING worker and it was still reading this Chromebook's home record from the drive (1.7 s
-// on a drive holding 800 MB), the incoming worker took over, the outgoing one was ended with the request unanswered,
-// and the frame stayed blank for ever: "the child home did not open" (4 of 7 runs after a changed worker file).
-// Three things, each tested here:
+// A newer version of the offline worker takes over (the pilot was deployed since this Chromebook last opened it).
+// Found on the rig, 18 Nov 2026: a full Get ready stopped at "the child home did not open". What the experiments
+// showed (an instrumented worker; rig/handover-check.mjs plays it):
+//   - Get ready registers the worker, which is when Chrome fetches the changed file. The new worker installs, and
+//     once the outgoing one is idle Chrome stops it and makes the new one the worker in charge (skipWaiting).
+//   - A page asked for in that moment (after the outgoing worker was stopped, before the new one is "activating")
+//     is handed to a FRESH copy of the outgoing worker (it starts with nothing in memory), and that copy is ended
+//     when the new worker is in charge. The page is never answered: a frame stays blank, a tab stays where it was.
+//   - A page already being fetched is waited for (held 4 s by the server: the new worker waited 4 s, the page
+//     opened). A page asked for once the new worker is "activating" is kept for it and opens. Requests for data at
+//     that moment were all answered (18 of 18).
+// Before: the Child home step failed in 4 Get-ready runs of 7 after a changed worker file, and 2 of 13 moves to
+// another page begun 0.6 to 0.9 s after a new worker appeared were never answered. Tested here:
 //   - Get ready waits for a worker that is on its way in before its first step (cb.html: workerSettled)
-//   - a home that did not open in the frame is opened once more before the step gives up (cb.html: homeFrame)
-//   - the worker has the home record in memory from its start, so a home request never waits on the drive
+//   - a home that did not open in its frame is opened once more before the step gives up (cb.html: homeFrame)
+//   - a move to another page that a takeover cut off is made again by the page (boot.js: moveGuard)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-import { load, ORIGIN } from './sw-harness.mjs';
+import { ORIGIN } from './sw-harness.mjs';
 
 const html = fs.readFileSync(new URL('../cb.html', import.meta.url), 'utf8');
 const fn = (name, args) => {
@@ -91,19 +97,58 @@ test('Child home step: a home that did not open in its frame is opened once more
   assert.equal(never.opened.length, 2);
 });
 
-/* ---- the worker's part ---- */
-const token = (ids, exp) => `${Buffer.from(JSON.stringify({ k: 'h', ids, exp })).toString('base64url')}.${'s'.repeat(22)}`;
+/* ---- a child's tap in the moment a newer worker takes over (boot.js: moveGuard) ----
+ * The page remembers where it was last asked to go, and goes again when a newer worker has taken over and the page
+ * is still there. */
+const boot = fs.readFileSync(new URL('../boot.js', import.meta.url), 'utf8');
+function guarded() {
+  const m = /function moveGuard\(w\) \{[\s\S]*?\n  \}\n/.exec(boot);
+  assert.ok(m, 'boot.js has a moveGuard(w) function');
+  const on = {}; const timers = []; const went = []; const kv = new Map();
+  const w = {
+    navigation: { addEventListener: (t, f) => { on[t] = f; } },
+    navigator: { serviceWorker: { addEventListener: (t, f) => { on[t] = f; } } },
+    setTimeout: (f, ms) => { timers.push({ f, ms }); },
+    location: { set href(u) { went.push(u); } },
+    sessionStorage: { getItem: (k) => (kv.has(k) ? kv.get(k) : null), setItem: (k, v) => kv.set(k, String(v)) },
+  };
+  new Function('w', `${m[0]}; moveGuard(w);`)(w);
+  const move = (url, extra = {}) => on.navigate({ hashChange: false, downloadRequest: null, formData: null, destination: { url, sameDocument: false }, ...extra });
+  return { on, move, takeover: () => on.controllerchange(), later: () => { timers.splice(0).forEach((t) => t.f()); }, went, timers, kv };
+}
 
-test('worker: the home record is in memory from the start, so a home page is asked of the network at once even when the drive does not answer', async () => {
-  const now = Math.floor(Date.now() / 1000);
-  const hub = token(['11111111-1111-4111-8111-111111111111'], now + 600000);
-  const sw = load({ fetch: async (req) => (new URL(req.url).pathname.startsWith('/h/') ? new Response('<html><a class="wq-door"></a></html>', { status: 200, headers: { 'Content-Type': 'text/html' } }) : new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })) });
-  await tick(20);
-  assert.equal(sw.run('homeMem !== null'), true, 'read when the worker started, before anything asked for it');
-  // from here on the drive does not answer (what a busy 800 MB store did for 1.7 s while a new worker was coming in)
-  sw.caches.open = () => new Promise(() => {});
-  const res = await Promise.race([sw.visit(`/h/${hub}`), tick(400).then(() => 'never answered')]);
-  assert.notEqual(res, 'never answered', 'the request must not wait for the drive');
-  assert.equal(res.status, 200);
-  assert.ok(sw.net.calls.some((c) => c.url === `/h/${hub}`), 'it went to the network');
+test('a tap that began before a newer worker took over, on a page that is still here a moment later, is made again', async () => {
+  const p = guarded();
+  p.move(`${ORIGIN}/q/ABC123?k=chip`);
+  await tick(3);
+  p.takeover();
+  assert.deepEqual(p.went, [], 'not at once: a move that was answered leaves this page by itself');
+  assert.ok(p.timers[0].ms >= 300 && p.timers[0].ms <= 1500, 'a moment later');
+  p.later();
+  assert.deepEqual(p.went, [`${ORIGIN}/q/ABC123?k=chip`]);
+  assert.equal(p.kv.get('cb-move-again'), '1', 'counted, for a rig or a fleet view to see');
+  p.takeover(); p.later();
+  assert.equal(p.went.length, 1, 'once: a second takeover does not send the page there again');
+});
+
+test('nothing is made again without a reason: no tap, a tap after the takeover, a door inside the page, a form, an old tap', async () => {
+  const none = guarded(); none.takeover(); none.later();
+  assert.deepEqual(none.went, []);
+  const after = guarded(); after.takeover(); await tick(3); after.move(`${ORIGIN}/q/ABC123`); after.later();
+  assert.deepEqual(after.went, [], 'begun after the takeover: the newer worker has it');
+  const door = guarded(); door.move(`${ORIGIN}/h/x#games`, { hashChange: true, destination: { url: `${ORIGIN}/h/x#games`, sameDocument: true } }); await tick(3); door.takeover(); door.later();
+  assert.deepEqual(door.went, [], 'a door opens inside the page');
+  const form = guarded(); form.move(`${ORIGIN}/submit`, { formData: {} }); await tick(3); form.takeover(); form.later();
+  assert.deepEqual(form.went, [], 'a form is never sent twice');
+  const real = Date.now; const old = guarded(); old.move(`${ORIGIN}/q/ABC123`);
+  try { Date.now = () => real() + 60000; old.takeover(); old.later(); } finally { Date.now = real; }
+  assert.deepEqual(old.went, [], 'a tap from a minute ago is not what was cut off');
+});
+
+test('a browser without the navigation events (or a page with no worker) is left alone', () => {
+  const m = /function moveGuard\(w\) \{[\s\S]*?\n  \}\n/.exec(boot);
+  assert.ok(m, 'boot.js has a moveGuard(w) function');
+  const run = new Function('w', `${m[0]}; moveGuard(w);`);
+  assert.doesNotThrow(() => run({ navigator: { serviceWorker: { addEventListener() {} } } }));
+  assert.doesNotThrow(() => run({ navigation: { addEventListener() {} }, navigator: {} }));
 });

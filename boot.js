@@ -313,6 +313,35 @@
     return navigator.serviceWorker.ready;
   }).then(function () { homeSync(); return warm(); }).then(refresh, refresh);
   navigator.serviceWorker.addEventListener('controllerchange', function () { homeSync(); refresh(); });
+
+  /* A TAP CUT OFF BY A NEWER WORKER (lane/home, 18 Nov 2026). After the pilot has been deployed, the newer worker
+   * takes over a second or two after a page opens (skipWaiting). A move to another page that begins in the moment
+   * of the takeover is lost: Chrome hands it to a fresh copy of the outgoing worker and ends that copy, unanswered,
+   * when the new worker is in charge. The page stays where it is, as if the tap had not happened (on the rig, 2 of
+   * 13 moves begun 0.6 to 0.9 s after the newer worker appeared; a page already being fetched is waited for, and 18
+   * requests for data at that moment were all answered). So the page remembers where it was last asked to go, and
+   * when a newer worker has taken over and this page is still here a moment later, it goes there again. A door
+   * inside the page and a form are left alone. */
+  function moveGuard(w) {
+    var nav = w.navigation, sw = w.navigator && w.navigator.serviceWorker;
+    if (!nav || !nav.addEventListener || !sw) return;
+    var going = null;
+    nav.addEventListener('navigate', function (e) {
+      if (e.hashChange || e.downloadRequest || e.formData || !e.destination || e.destination.sameDocument) return;
+      going = { url: e.destination.url, at: Date.now() };
+    });
+    sw.addEventListener('controllerchange', function () {
+      var changed = Date.now();
+      w.setTimeout(function () {
+        // (still running means still here: a move that was answered has taken this page away)
+        if (!going || going.at > changed || changed - going.at > 20000) return;
+        var to = going.url; going = null;
+        try { w.sessionStorage.setItem('cb-move-again', String((Number(w.sessionStorage.getItem('cb-move-again')) || 0) + 1)); } catch (e) { /* no storage: go anyway */ }
+        w.location.href = to;
+      }, 600);
+    });
+  }
+  moveGuard(window);
   window.addEventListener('online', refresh);
   window.addEventListener('offline', refresh);
   setInterval(refresh, 5000);

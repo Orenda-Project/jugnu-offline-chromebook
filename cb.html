@@ -375,8 +375,9 @@
       document.body.appendChild(f);
     });
   }
-  // The child home in a hidden frame. A frame that comes back without the home in it (a request that was never
-  // answered leaves it blank) is taken off the page and the home is opened once more before the step gives up.
+  // The child home in a hidden frame. A frame that comes back without the home in it (a page that was never
+  // answered leaves it blank: see workerSettled) is taken off the page and the home is opened once more before the
+  // step gives up.
   function homeFrame(tries) {
     return frame('/h/' + CFG.hub, 7000).then(function (f) {
       var d = f.contentDocument;
@@ -388,9 +389,12 @@
   }
   /* A NEWER WORKER ON ITS WAY IN (18 Nov 2026). Registering the worker is when Chrome looks for a new worker file
    * (the pilot was deployed since this Chromebook last opened it). The new one installs and takes over a second or
-   * two later, and a request the outgoing worker has not answered by then is never answered: the hidden frame of
-   * the "Child home" step stayed blank, 4 runs in 7. So Get ready looks for a new worker first and waits until it
-   * is in charge. With no network to look with, or after `wait` ms, it goes on. Resolves 'same' | 'new' | 'late'. */
+   * two later. A page that is asked for in the moment of the takeover is lost: Chrome hands it to a fresh copy of
+   * the outgoing worker and ends that copy, unanswered, when the new worker is in charge (a page already being
+   * fetched is waited for; one asked for once the new worker is "activating" is kept for it). The hidden frame of
+   * the "Child home" step was asked for in that moment and stayed blank, 4 runs in 7. So Get ready looks for a new
+   * worker first and waits until it is in charge. With no network to look with, or after `wait` ms, it goes on.
+   * Resolves 'same' | 'new' | 'late'. */
   function workerSettled(reg, wait) {
     return new Promise(function (ok) {
       var done = false;
