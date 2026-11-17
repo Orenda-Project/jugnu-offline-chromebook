@@ -69,10 +69,34 @@ function miss(req, why) {
 function offlineAnswer(req) {
   miss(req, 'not_kept');
   var html = req.mode === 'navigate';
-  return new Response(html ? '<h1>Offline</h1><p>This page was not saved on this device.</p>' : 'offline', {
+  return new Response(html ? NEEDS_NET_PAGE : 'offline', {
     status: 503, headers: { 'Content-Type': html ? 'text/html; charset=utf-8' : 'text/plain', 'X-CB-Offline': '1' },
   });
 }
+/* NEEDS THE INTERNET (lane/home; operator, 18 Nov 2026: "if there is internet and content is not downloaded it should
+ * still play"). With a network, anything not saved comes from the network: pages and lists network-first, a lesson
+ * video straight from its signed link with the player's own byte ranges (media()). With none, a page that is not on
+ * the drive is this one: plain words a child can read, in English and Urdu, Jugnu asleep (when that picture is
+ * saved), a way Home and a Try again; it opens the real page by itself when the network is back. Still a 503 marked
+ * X-CB-Offline, and still carrying "not saved on this device", for the self-test and the rigs. */
+var NEEDS_NET_PAGE = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Jugnu</title>' +
+  '<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf3df;color:#1f2937;font:20px/1.5 system-ui,sans-serif}' +
+  'main{max-width:600px;padding:20px 24px;text-align:center}img{width:120px;height:120px}h1{font-size:30px;margin:6px 0 4px}p{margin:6px 0}' +
+  '.ur{direction:rtl;font-size:23px;line-height:1.9;margin-top:12px}.ur b{font-size:27px}' +
+  '.row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:18px}' +
+  'a,button{font:700 20px system-ui,sans-serif;padding:13px 26px;border-radius:999px;border:0;cursor:pointer;text-decoration:none}' +
+  'a{background:#e87b2a;color:#fff;box-shadow:0 4px 0 #b85c17}button{background:#fff;color:#1f2937;border:2px solid #e7dfc9}' +
+  'small{display:block;margin-top:18px;color:#9ca3af;font-size:13px}</style></head><body><main data-cb-needs-net>' +
+  '<img src="/wq/jugnu/sleep.webp" alt="" onerror="this.remove()">' +
+  '<h1>This needs the internet</h1>' +
+  '<p>It is not saved on this Chromebook yet. Ask your teacher to turn on the Wi-Fi, or go Home and play something that is saved.</p>' +
+  '<div class="ur" lang="ur"><b>اس کے لیے انٹرنیٹ چاہیے</b><br>یہ ابھی اس کروم بک پر محفوظ نہیں ہے۔ اپنے ٹیچر سے وائی فائی چلانے کو کہیں، یا ہوم پر جا کر کوئی محفوظ چیز کھیلیں۔</div>' +
+  '<div class="row"><a href="/cb/home">⌂ Home · ہوم</a><button type="button" onclick="location.reload()">Try again · دوبارہ</button></div>' +
+  '<small>This page was not saved on this device.</small></main>' +
+  '<script>addEventListener("online",function(){location.reload()})</script></body></html>';
+// Is the network there? From what the last page or list request met (a browser's own "online" only knows about the
+// Wi-Fi, not about the internet behind it). boot.js asks before it tells a child "this needs the internet".
+var netLast = null; // 'up' | 'down': what the last request met (an order, not a clock: two can fall in one millisecond)
 
 function networkFirst(req, key) {
   return new Promise(function (resolve) {
@@ -85,6 +109,7 @@ function networkFirst(req, key) {
       kept(key).then(function (hit) { if (hit && !done) { done = true; resolve(hit); } });
     }, NETWORK_WAIT_MS);
     fetch(req).then(function (res) {
+      netLast = res.status >= 500 ? 'down' : 'up'; // NEEDS THE INTERNET (lane/home)
       // A server error (a dropped upstream answered by the tunnel or a school proxy as 502/503/504) counts as no
       // network when a kept copy exists: the child gets the copy, not an error page.
       if (res.status >= 500) {
@@ -95,6 +120,7 @@ function networkFirst(req, key) {
       if (req.headers.get('X-CB-Keep') !== 'no') keep(key, res);
       if (!done) { done = true; clearTimeout(timer); resolve(res); }
     }, function () {
+      netLast = 'down'; // NEEDS THE INTERNET (lane/home)
       if (done) return;
       done = true; clearTimeout(timer);
       kept(key).then(function (hit) { resolve(hit || offlineAnswer(req)); });
@@ -187,10 +213,14 @@ function lsidOf(st) { return typeof st === 'string' && st.indexOf(LOCAL) === 0 ?
 
 function localSession(body) {
   var lsid = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(8)), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
-  var name = (body.new && body.new.name) || '';
-  return putRec({ lsid: lsid, session: body, answers: {}, finish: false, createdAt: Date.now() }).then(function () {
-    return json({ st: LOCAL + lsid, device_ref: body.device_ref, counted: true, resume: { answered: [] },
-      child: { chip: 'l' + lsid.slice(0, 15), first: name.split(/\s+/)[0] || name, animal: 'owl' }, local: true });
+  // (lane/home) A quiz opened from the home (a lesson's quiz) names its child by a chip, not a typed name: with no
+  // network the page then greeted nobody ("Welcome back, !"). The child picked on Who's playing? is who is there.
+  return homeState().then(function (st) {
+    var name = (body.new && body.new.name) || st.name || '';
+    return putRec({ lsid: lsid, session: body, answers: {}, finish: false, createdAt: Date.now() }).then(function () {
+      return json({ st: LOCAL + lsid, device_ref: body.device_ref, counted: true, resume: { answered: [] },
+        child: { chip: 'l' + lsid.slice(0, 15), first: name.split(/\s+/)[0] || name, animal: 'owl' }, local: true });
+    });
   });
 }
 
@@ -482,6 +512,7 @@ function homeAsk(d, port) {
     if (typeof d.key === 'string' && d.key) st.key = d.key;
     if (typeof d.device === 'string' && d.device) st.device = d.device;
     if (d.lang === 'en' || d.lang === 'ur') st.lang = d.lang;
+    if (d.name !== undefined) st.name = typeof d.name === 'string' ? d.name.slice(0, 40) : ''; // the picked child's name, kept on this device only
     if (d.who !== undefined) {
       var id = typeof d.who === 'string' && /^[0-9a-f-]{36}$/i.test(d.who) ? d.who : null;
       if (!id) st.who = null; else if (!st.who || st.who.id !== id) st.who = { id: id };
@@ -673,6 +704,8 @@ function readyMessage(d, port, e) {
     e.waitUntil(caches.open(KEEP).then(function (c) { return Promise.all(d.urls.map(function (u) { return has(c, u).catch(function () { return false; }); })); }).then(reply, function () { reply(null); }));
     return true;
   }
+  // is the network there, as far as the last requests could tell? (NEEDS THE INTERNET)
+  if (d.type === 'net') { reply({ offline: self.navigator && self.navigator.onLine === false ? true : netLast === 'down' }); return true; }
   // take files off the drive: our own by their exact address, another site's by its address without the signature.
   // Answers how many were there. (A class of lesson videos that turned out not to fit is not left half-saved.)
   if (d.type === 'drop' && Array.isArray(d.urls)) {

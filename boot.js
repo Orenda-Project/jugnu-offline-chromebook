@@ -161,6 +161,101 @@
     });
   }
 
+  /* NEEDS THE INTERNET (lane/home; operator, 18 Nov 2026). Whatever is not saved plays from the internet when there
+   * is one. With none, a page that is not saved is answered by the worker's own "This needs the internet" page. Two
+   * things happen INSIDE a page that did open, and Jugnu has no words for them on a Chromebook:
+   *   - a list behind a door that is not on the drive (the videos of a class that was not saved): Jugnu marks the
+   *     list as failed and says "This did not load";
+   *   - a lesson page that is on the drive whose video is not (it was watched online once): a player that does nothing.
+   * Both get the same plain words in the page's language, with Jugnu asleep when that picture is saved. They are
+   * shown only when the network really is not there (the worker says), and go away when it is back. */
+  var NEEDS = {
+    en: { list: 'This needs the internet', listSay: 'It is not saved on this Chromebook yet. Ask your teacher to turn on the Wi-Fi, or play something that is saved.', video: 'This video needs the internet', videoSay: 'It is not saved on this Chromebook yet.' },
+    ur: { list: 'اس کے لیے انٹرنیٹ چاہیے', listSay: 'یہ ابھی اس کروم بک پر محفوظ نہیں ہے۔ اپنے ٹیچر سے وائی فائی چلانے کو کہیں، یا کوئی محفوظ چیز کھیلیں۔', video: 'اس ویڈیو کے لیے انٹرنیٹ چاہیے', videoSay: 'یہ ابھی اس کروم بک پر محفوظ نہیں ہے۔' },
+  };
+  function needsWords() { return /^ur/i.test(document.documentElement.getAttribute('lang') || '') || document.documentElement.getAttribute('dir') === 'rtl' ? NEEDS.ur : NEEDS.en; }
+  function netDown() {
+    if (navigator.onLine === false) return Promise.resolve(true);
+    var sw = navigator.serviceWorker.controller;
+    return sw ? ask(sw, { type: 'net' }, 2000).then(function (r) { return !!(r && r.offline); }) : Promise.resolve(false);
+  }
+  function needsCard(title, say, compact) {
+    var rtl = needsWords() === NEEDS.ur;
+    var d = document.createElement('div');
+    d.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+    // (Urdu is set larger: Nastaliq reads small at a Latin size)
+    var big = (compact ? 21 : 22) + (rtl ? 4 : 0), small = (compact ? 16 : 17) + (rtl ? 3 : 0);
+    d.innerHTML = '<img src="/wq/jugnu/sleep.webp" alt="" width="' + (compact ? 84 : 72) + '" height="' + (compact ? 84 : 72) + '" onerror="this.remove()" style="flex:none">' +
+      '<div style="text-align:start"><b style="display:block;font-size:' + big + 'px"></b><span style="font-size:' + small + 'px"></span></div>';
+    d.querySelector('b').textContent = title; d.querySelector('span').textContent = say;
+    d.style.cssText = 'display:flex;gap:12px;align-items:center;justify-content:center;padding:12px 16px;border-radius:16px;background:#fff8e6;color:#1f2937;' +
+      'border:2px solid #f1c27a;font:16px/' + (rtl ? '1.9' : '1.45') + ' system-ui,sans-serif;box-shadow:0 3px 10px rgba(0,0,0,.12)';
+    return d;
+  }
+  // a list that did not load, with no network: the words go in a card pinned under the page's header
+  function listNote(show) {
+    var had = document.querySelector('[data-cb-needs-list]');
+    if (!show) { if (had) had.remove(); return; }
+    if (had || !document.body) return;
+    var w = needsWords();
+    var card = needsCard(w.list, w.listSay, false);
+    card.setAttribute('data-cb-needs-list', '');
+    card.style.cssText += ';position:fixed;left:50%;top:112px;transform:translateX(-50%);z-index:2147483646;max-width:min(520px,92vw);pointer-events:none';
+    document.body.appendChild(card);
+  }
+  // Jugnu's own words for a list that failed (wq-doors.js copy), for the lists that carry no data-fetch mark
+  var FAILED_RX = /This did not load\.|The stories could not open yet\.|اوہو! یہ نہیں کھل سکا۔|کہانیاں ابھی نہیں کھل سکیں۔/;
+  function listFailed() {
+    var root = document.getElementById('wq');
+    if (!root) return false;
+    if (root.getAttribute('data-fetch') === 'failed' || root.querySelector('[data-fetch="failed"]')) return true;
+    return FAILED_RX.test(root.textContent || '');
+  }
+  // a lesson's video that is not on the drive, with no network: the words cover the player (the questions stay)
+  function videoNote(v, show) {
+    var box = v.closest('.wq-vbox') || v.parentElement;
+    if (!box) return;
+    var had = box.querySelector('[data-cb-needs-video]');
+    if (!show) { if (had) had.remove(); return; }
+    if (had) return;
+    var w = needsWords();
+    var card = needsCard(w.video, w.videoSay, true);
+    card.setAttribute('data-cb-needs-video', '');
+    if (getComputedStyle(box).position === 'static') box.style.position = 'relative';
+    card.style.cssText += ';position:absolute;inset:0;z-index:5;border-radius:inherit;box-shadow:none';
+    box.appendChild(card);
+  }
+  function videosCheck() {
+    var sw = navigator.serviceWorker.controller;
+    var vs = [].slice.call(document.querySelectorAll('video.wq-video, video.wq-vid')).filter(function (v) { return /^https?:/.test(v.currentSrc || v.getAttribute('src') || ''); });
+    if (!vs.length || !sw) return;
+    netDown().then(function (off) {
+      if (!off) { vs.forEach(function (v) { videoNote(v, false); }); return null; }
+      return ask(sw, { type: 'have', urls: vs.map(function (v) { return v.currentSrc || v.getAttribute('src'); }) }, 4000).then(function (have) {
+        vs.forEach(function (v, i) { videoNote(v, !(have && have[i])); });
+      });
+    });
+  }
+  var needsTimer = null;
+  function needsCheck() {
+    if (needsTimer) return;
+    needsTimer = setTimeout(function () {
+      needsTimer = null;
+      if (listFailed()) netDown().then(function (off) { listNote(off && listFailed()); }); else listNote(false);
+      videosCheck();
+    }, 500);
+  }
+  if (/^\/(h|q|c|lib)\//.test(location.pathname)) {
+    document.addEventListener('DOMContentLoaded', function () {
+      new MutationObserver(needsCheck).observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-fetch', 'data-m', 'src'] });
+      needsCheck();
+    });
+    // a player that could not get its file says so by an "error" that does not travel up the page: caught on its way down
+    document.addEventListener('error', function (e) { if (e.target && e.target.tagName === 'VIDEO') needsCheck(); }, true);
+    window.addEventListener('online', function () { listNote(false); needsCheck(); });
+    window.addEventListener('offline', needsCheck);
+  }
+
   /* HOME (lane/home): this Chromebook's child home is kept by the offline worker (pilot-sw.js, block HOME). Each page
    * hands it what only a page can read (the device key, the device id, the child picked on Who's playing?) and takes
    * back the live link, which other pages and Get-ready steps read as cb-hub. Asked on load, when the network comes
@@ -173,7 +268,7 @@
     try { kid = JSON.parse(get('cb-child') || 'null'); } catch (e) { kid = null; }
     var device = get('cb-device');
     if (!device) { device = 'd' + Math.random().toString(36).slice(2, 12); try { localStorage.setItem('cb-device', device); } catch (e) {} }
-    return ask(sw, { type: 'home', key: get('cb-key'), device: device, who: kid && kid.student_id ? kid.student_id : null, fresh: !!fresh }, 6000).then(function (h) {
+    return ask(sw, { type: 'home', key: get('cb-key'), device: device, who: kid && kid.student_id ? kid.student_id : null, name: kid && kid.name ? kid.name : '', fresh: !!fresh }, 6000).then(function (h) {
       if (h && h.hub) { try { localStorage.setItem('cb-hub', h.hub); } catch (e) {} }
       return h;
     });

@@ -821,7 +821,7 @@
   // The worker learns this Chromebook's key and id as soon as this page opens (not only at Get ready), so the child
   // home is renewed from the first moment there is a network; and who was just picked on Who's playing? (this page
   // is where a pick lands), so the very next Home is that child's.
-  if (KEY) ask({ type: 'home', key: KEY, device: DEVICE, who: (child() && child().student_id) || null }, 8000).then(function (h) { if (h && h.hub) ls('cb-hub', h.hub); });
+  if (KEY) ask({ type: 'home', key: KEY, device: DEVICE, who: (child() && child().student_id) || null, name: (child() && child().name) || '' }, 8000).then(function (h) { if (h && h.hub) ls('cb-hub', h.hub); });
   if (run.complete) { $('phase').textContent = 'Ready. Everything below works on this Chromebook without Wi-Fi.'; $('ready').textContent = 'Get ready again (checks for new things)'; $('pct').style.width = '100%'; $('again').classList.remove('hidden'); }
   else if (Object.keys(run.done).length) { $('phase').textContent = 'Get ready was stopped part-way. Press the button: it carries on from where it was.'; $('ready').textContent = 'Carry on'; $('again').classList.remove('hidden'); }
   // The page was reloaded to put the worker in charge, or the Chromebook was closed while Get ready was running: carry on.

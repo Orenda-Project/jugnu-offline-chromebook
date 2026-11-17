@@ -61,7 +61,8 @@
   }
 
   async function run(ctx) {
-    var json = function (u) { return fetch(u).then(function (r) { if (!r.ok) throw new Error('the list did not load (' + r.status + ')'); return r.json(); }); };
+    // (a list is read without being kept: a class's lists go on the drive when the class is on the drive, see 7)
+    var json = function (u) { return fetch(u, { headers: { 'X-CB-Keep': 'no' } }).then(function (r) { if (!r.ok) throw new Error('the list did not load (' + r.status + ')'); return r.json(); }); };
     var sum = function (xs, f) { return xs.reduce(function (a, x) { return a + (f(x) || 0); }, 0); };
     if (!ctx.kid) throw new Error('no child id: the child home did not open');
     var top = await json(libUrl(ctx.hub, ctx.kid, 'en', null));
@@ -100,15 +101,14 @@
         var made = await fetch('/api/wq/videos/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hub: ctx.hub, kid: ctx.kid, vid: bare[bi].vid }) }).then(function (r) { return r.ok ? r.json() : {}; }, function () { return {}; });
         if (made.code && made.k) { bare[bi].code = made.code; bare[bi].k = made.k; }
       }
-      // 3. the lists as the door will ask for them, both languages, saved afresh (they now name every lesson's page)
+      // 3. the lists as the door will ask for them, both languages (they now name every lesson's page), and the
+      //    lessons' pictures: named here, saved in 7, once every lesson of the class is on the drive
       var lists = [];
       (g === own ? [g, null] : [g]).forEach(function (as) {
         LANGS.forEach(function (l) { lists.push(libUrl(ctx.hub, ctx.kid, l, as)); subjects.forEach(function (s) { lists.push(libUrl(ctx.hub, ctx.kid, l, as, s)); }); });
       });
       var pics = [];
       lessons.forEach(function (v) { [v.thumb, v.poster, v.art].forEach(function (u) { if (u && pics.indexOf(u) < 0) pics.push(u); }); });
-      await ctx.warm(lists.map(ctx.abs), { fresh: true, each: quiet.each });
-      await ctx.warm(pics.map(ctx.abs), { readable: true, each: quiet.each });
       // 4. MEASURE, lesson by lesson (six at a time): its page, the video it names, and that video's real length: the
       //    file on the drive when it is kept, else its length on the server, asked for with one byte (the worker's
       //    `size`). A lesson this step saved before is checked against the drive here too: if its page, its video or
@@ -218,6 +218,12 @@
         problems.push(name + ': the drive filled up; nothing of ' + name + ' is kept');
         ctx.log('lesson videos, ' + name + ': the drive filled up while saving it; what was saved of it has been taken off again');
         break;
+      }
+      // 7. the class is whole: its lists (saved afresh) and pictures go on the drive, so the Videos door shows it with
+      //    no network. A class that is not whole leaves no list of lessons that would not play.
+      if (have.length === lessons.length) {
+        await ctx.warm(lists.map(ctx.abs), { fresh: true, each: quiet.each });
+        await ctx.warm(pics.map(ctx.abs), { readable: true, each: quiet.each });
       }
       record(); ctx.note('cb-videos', summary);
       if (have.length < lessons.length) problems.push(name + ': ' + (lessons.length - have.length) + ' of ' + lessons.length + ' lessons not saved yet');

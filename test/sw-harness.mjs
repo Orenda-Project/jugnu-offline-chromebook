@@ -112,6 +112,11 @@ export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js')
   return {
     net: state, caches,
     get: (p, init = {}) => dispatch(new Request(url(p), { method: 'GET', ...init })),
+    // a page being opened (a tab or a frame going to this address): the one kind of request a script cannot make
+    visit: (p) => {
+      const real = new Request(url(p), { method: 'GET', headers: { Accept: 'text/html' } });
+      return dispatch(new Proxy(real, { get(t, k) { if (k === 'mode') return 'navigate'; const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; } }));
+    },
     head: (p) => dispatch(new Request(url(p), { method: 'HEAD' })),
     put: (p, body, headers = {}) => dispatch(new Request(url(p), { method: 'PUT', headers, body })),
     post: (p, body, headers = {}) => dispatch(new Request(url(p), { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) })),
