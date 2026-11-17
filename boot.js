@@ -315,6 +315,19 @@
   }).then(function () { homeSync(); return warm(); }).then(refresh, refresh);
   navigator.serviceWorker.addEventListener('controllerchange', function () { homeSync(); refresh(); });
 
+  /* A LEFTOVER ROOM PROBE (lane/home, 18 Nov 2026). The start page asks Chrome how much it may keep by growing a
+   * file in the site's private files for a moment (cb.html: ROOM_WORKER). A start page closed at that instant can
+   * leave the file grown: room charged to the site that nothing holds (a rig showed "8.6 GB saved" on a Chromebook
+   * with nothing saved). Every Jugnu page takes such a leftover off the drive. A probe at work holds its file, and
+   * the browser then refuses: left alone. */
+  function probeSweep(storage) {
+    try {
+      if (!storage || !storage.getDirectory) return Promise.resolve();
+      return storage.getDirectory().then(function (dir) { return dir.removeEntry('cb-room-probe'); }).then(function () {}, function () {});
+    } catch (e) { return Promise.resolve(); }
+  }
+  probeSweep(navigator.storage);
+
   /* A TAP CUT OFF BY A NEWER WORKER (lane/home, 18 Nov 2026). After the pilot has been deployed, the newer worker
    * takes over a second or two after a page opens (skipWaiting). A move to another page that begins in the moment
    * of the takeover is lost: Chrome hands it to a fresh copy of the outgoing worker and ends that copy, unanswered,

@@ -174,13 +174,16 @@
    * The whole allowance (room + used at that moment) does not change, so later "room" is that less what is used. */
   var ROOM_WORKER = 'onmessage = async function (e) { var out = null; try { var root = await navigator.storage.getDirectory();' +
     ' var fh = await root.getFileHandle("cb-room-probe", { create: true }); var h = await fh.createSyncAccessHandle();' +
-    ' var fits = function (n) { try { h.truncate(n); return true; } catch (err) { return false; } };' +
+    // (the file is big only for the length of one call: asked, answered, cut back. A page that closes in the middle
+    //  ends this worker where it stands; a file left grown would be room charged to the site that nothing holds)
+    ' var fits = function (n) { var ok = true; try { h.truncate(n); } catch (err) { ok = false; } try { h.truncate(0); } catch (err) {} return ok; };' +
     ' if (e.data.fits != null) out = fits(e.data.fits);' +
     ' else { var lo = 0, hi = 1073741824; while (hi < 1125899906842624 && fits(hi)) { lo = hi; hi *= 2; }' +
     ' for (var i = 0; i < 30 && hi - lo > 16777216; i += 1) { var mid = Math.floor((lo + hi) / 2); if (fits(mid)) lo = mid; else hi = mid; } out = lo; }' +
     ' try { h.truncate(0); } catch (err) {} h.close(); await root.removeEntry("cb-room-probe"); } catch (err) { out = null; } postMessage(out); };';
+  var probing = Promise.resolve(); // settles when no probe is at work (while one is, its file is counted as "used")
   function roomProbe(msg) {
-    return new Promise(function (ok) {
+    var asked = new Promise(function (ok) {
       try {
         var w = new Worker(URL.createObjectURL(new Blob([ROOM_WORKER], { type: 'text/javascript' })));
         var t = setTimeout(function () { w.terminate(); ok(null); }, 8000);
@@ -189,6 +192,9 @@
         w.postMessage(msg);
       } catch (e) { ok(null); }
     });
+    var before = probing;
+    probing = asked.then(function () { return before; });
+    return asked;
   }
   function fits(bytes) { return roomProbe({ fits: Math.ceil(bytes) }); }
   var allowance = null; // everything Chrome lets this site keep on this Chromebook, in bytes (null: not asked, or cannot be)
@@ -197,7 +203,7 @@
     if (!st || !st.estimate) return Promise.resolve(null);
     return roomProbe({}).then(function (more) {
       if (more == null) return null;
-      return st.estimate().then(function (e) { allowance = more + (e.usage || 0); return more; }, function () { return null; });
+      return probing.then(function () { return st.estimate(); }).then(function (e) { allowance = more + (e.usage || 0); return more; }, function () { return null; });
     });
   }
   /* Room on this Chromebook: what Jugnu uses, what Chrome would still let it keep (`room`: real; `free`: only what
@@ -205,7 +211,8 @@
   function space() {
     var st = navigator.storage;
     if (!st || !st.estimate) return Promise.resolve({ used: 0, free: null, room: null, safe: null });
-    return st.estimate().then(function (e) {
+    // (read when no probe is at work: a start page read "1.1 GB saved" on an empty Chromebook, the probe's own file)
+    return probing.then(function () { return st.estimate(); }).then(function (e) {
       var used = e.usage || 0;
       return Promise.resolve(st.persisted ? st.persisted() : null).then(function (p) { return { used: used, quota: e.quota || 0, free: e.quota ? Math.max(0, e.quota - used) : null, room: allowance == null ? null : Math.max(0, allowance - used), safe: p }; });
     }, function () { return { used: 0, free: null, room: null, safe: null }; });
