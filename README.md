@@ -134,6 +134,9 @@ What the pilot does for them:
   pilot).
 - **The Chromebook's keyboard types** into Jugnu's number pads and letter strip (digits, letters, Backspace, Enter);
   Jugnu's screens take no key at all.
+- **The Challenge's screens fit the page too** (`boot.js`): they are sized for a phone held upright, and on a 633 px
+  page the number pad's 0 and delete, the microphone notice's OK and a result card's Home were below it. A screen
+  taller than the page is scaled down to it (never below 0.7); a screen with the passage to read aloud is left alone.
 - **The battery's screens fit a 1366×633 page** (`cb-fit.css`, added to `/sa/play.html`): Jugnu sizes any screen 600 px
   or wider as a tall tablet, so the second row of answers and the keypad's 0 sat below the page. The last screen
   arrived 48 px low: Jugnu's celebration (`wq-juice.js` `finish`) moves the whole page up from 48 px below while it
@@ -171,8 +174,9 @@ What was added and proven on 18 Nov (the same rig; sandbox):
 - **Listen with no network**: four children (Grade 3 in English and in Urdu, Grade 5 in English, Grade 4 in Urdu),
   twice: the story, its three questions and the right or wrong of each answer all came from the device (the page
   saw `ch/qs` and three `ch/qa` answered by the worker); after reconnect the answers went up by themselves and
-  Jugnu scored each run (12 answers a round). Second round, with Get ready started over on devices that already
-  knew the stories: Get ready asked for one run a story and asked nothing of it.
+  Jugnu scored each run (12 answers a round). In the second round the devices already knew the stories: the runs
+  kept for no network had been asked nothing (Jugnu held them as served, not half-way) until the child's answers
+  arrived, and the pilot's server passed on no question and no answer before the reconnect (then 4 and 12).
 - **A result that arrives late**: five children whose saved games were 123 minutes old (so every token had lapsed)
   played with no network: 16 results (8 number games, 8 readings with their recordings) were taken by the runs they
   were played in. Jugnu's rows say so: served 18:31 UTC, played 20:32–20:34, received 20:34:45–58, `late`. Asked
@@ -186,6 +190,15 @@ What was added and proven on 18 Nov (the same rig; sandbox):
   `proxy-fresh.mjs` the battery page stayed October's.
 - **The last screen**: measured every frame. Before: the page 681 px and "Go back" ending at 663 px for 0.3 s, then
   rising to 633 and 615 by 0.7 s. After: 633 and 615 from the first frame (Urdu and English homes).
+- **The Challenge's screens on the short page**: across the runs, 15 kinds of screen had a control below 633 px (the
+  warm-up's 0 and delete at 755–838 px, the microphone notice's OK at 760–812, a result card's Home at 754–881, the
+  read-along's pause at 772–990). After the scale-to-fit in `boot.js`: 11 games for three children (the dots in
+  Urdu; warm-up, bigger, read along, read aloud and listen in English and in Urdu), nothing below the page on any
+  screen and no scrolling.
+- **Seen once and not explained**: in the first late-result run one "Which is bigger?" (of 17 number games played
+  offline in the two runs) opened on "No internet. Try again" at once. The game was on that device (asked with no
+  network afterwards, the worker answered it), and it did not happen again. That run's rig did not keep the request
+  that got no answer; it does now (`requests with no answer`).
 
 What cannot be done by the pilot, and why:
 
@@ -402,7 +415,8 @@ The learning games need these in Jugnu itself (the pilot covers each today, on i
 - A decision on keeping and scoring children's readings in the big flight (today: recorded, dropped, never scored).
 - Uploads of recordings from any origin Jugnu is served from (the bucket's CORS names one).
 - The celebration that starts a page 48 px low (`wq-juice.js` `finish` on the whole page): fine on a tall phone,
-  below the page on a short one. The Challenge's microphone notice and read-along controls sit just under 633 px.
+  below the page on a short one. The Challenge page's own layout for a wide, short screen (the pilot scales each
+  screen down to the page; a layout that uses the width would keep the keys full size).
 
 ## What we learned
 
