@@ -2,7 +2,8 @@
 // classes named, an interruption half-way (the page is closed and opened again), then "Check this Chromebook".
 //   CB_BASE=http://localhost:8813 DEVICE_KEY=… node rig/ready-check.mjs [--videos 2] [--interrupt] [--keep]
 //                                                                       [--check] [--check-offline] [--skip-ready]
-// --videos: the classes whose lesson videos to save (none | all | 1,2); --keep: use the profile as it is (no fresh start)
+// --videos: the classes whose lesson videos to save (none | all | 1,2 | default = whatever the page ticks by itself:
+//   Classes 1 to 5); with no --videos it is none, so a rig run stays short. --keep: use the profile as it is
 // --check: then press "Check that everything opens without Wi-Fi"; --check-offline: the same with the network truly
 // off (the server drops every connection and the browser is offline); --skip-ready: only the check (with --keep)
 import fs from 'node:fs';
@@ -30,7 +31,7 @@ const settled = (s) => s && /^(Ready\.|Not ready|Stopped)/.test(s.phase) && !/St
 
 try {
   const t0 = Date.now();
-  await page.goto(`${BASE}/cb?key=${encodeURIComponent(KEY)}&videos=${encodeURIComponent(videos)}${has('skip-ready') ? '&stay=1' : ''}`, { waitUntil: 'load' });
+  await page.goto(`${BASE}/cb?key=${encodeURIComponent(KEY)}${videos === 'default' ? '' : '&videos=' + encodeURIComponent(videos)}${has('skip-ready') ? '&stay=1' : ''}`, { waitUntil: 'load' });
   // (a run that was cut short carries on by itself when the page opens: the button is then already "pressed")
   if (!has('skip-ready') && await page.evaluate(() => !document.getElementById('ready').disabled)) await page.click('#ready');
   else if (!has('skip-ready')) say('      Get ready carried on by itself (the last run was cut short)');
@@ -52,7 +53,7 @@ try {
       say(`      after reopening: ${back.phase.slice(0, 90)} | done so far: ${back.steps.filter((x) => x.startsWith('✓')).length} steps | log: ${back.log.slice(-1)[0]}`);
     }
     if (settled(s)) break;
-    if (Date.now() - t0 > 3600e3) { say('gave up after an hour'); break; }
+    if (Date.now() - t0 > 4 * 3600e3) { say('gave up after four hours'); break; }
   }
   const s = await snap();
   say(`\nGet ready: ${Math.round((Date.now() - t0) / 1000)} s — ${s.phase}\nfiles: ${s.kept} · ${s.space}\n${s.steps.join('\n')}\n-- log --\n${s.log.join('\n')}`);
