@@ -79,3 +79,15 @@ test('a lesson quiz started with no network greets the child who was picked, not
   const typed = await (await sw.post('/api/wq/session', { code: 'ABCDEF', device_ref: 'dddddddddddddddddddddd', new: { name: 'Bilal' } })).json();
   assert.equal(typed.child.first, 'Bilal');
 });
+
+/* ---- boot.js: which of Jugnu's own "this did not open" screens get the plain words when there is no network ---- */
+test('with no network, Jugnu\'s "could not open" screens are the ones that get "This needs the internet": a list, the shelf, a storybook', async () => {
+  const fs = await import('node:fs');
+  const boot = fs.readFileSync(new URL('../boot.js', import.meta.url), 'utf8');
+  const m = /var FAILED_RX = (\/.*\/);/.exec(boot);
+  assert.ok(m, 'boot.js names the screens in FAILED_RX');
+  const rx = new Function(`return ${m[1]};`)();
+  // Jugnu's own copy (dashboard/public/wq/wq-doors.js, wq-stories.js), English and Urdu
+  for (const said of ['This did not load.', 'The stories could not open yet.', 'Jugnu could not open this.', 'اوہو! یہ نہیں کھل سکا۔', 'کہانیاں ابھی نہیں کھل سکیں۔', 'یہ کتاب ابھی نہیں کھل سکی۔']) assert.ok(rx.test(`Stories ${said} Try again`), said);
+  assert.equal(rx.test('Stories Storybooks Grade 3, English Eid time by Azka Zia'), false, 'a list that did load is left alone');
+});

@@ -203,8 +203,9 @@
     card.style.cssText += ';position:fixed;left:50%;top:112px;transform:translateX(-50%);z-index:2147483646;max-width:min(520px,92vw);pointer-events:none';
     document.body.appendChild(card);
   }
-  // Jugnu's own words for a list that failed (wq-doors.js copy), for the lists that carry no data-fetch mark
-  var FAILED_RX = /This did not load\.|The stories could not open yet\.|اوہو! یہ نہیں کھل سکا۔|کہانیاں ابھی نہیں کھل سکیں۔/;
+  // Jugnu's own words for a list that failed (wq-doors.js copy), for the lists that carry no data-fetch mark, and
+  // for a storybook that is not on the drive (wq-stories.js: "Jugnu could not open this.", its retry screen)
+  var FAILED_RX = /This did not load\.|The stories could not open yet\.|Jugnu could not open this\.|اوہو! یہ نہیں کھل سکا۔|کہانیاں ابھی نہیں کھل سکیں۔|یہ کتاب ابھی نہیں کھل سکی۔/;
   function listFailed() {
     var root = document.getElementById('wq');
     if (!root) return false;

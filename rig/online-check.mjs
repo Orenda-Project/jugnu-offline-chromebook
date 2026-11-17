@@ -3,6 +3,7 @@
 //   CB_BASE=http://localhost:8843 DEVICE_KEY=… node rig/online-check.mjs fresh
 //   CB_BASE=…                     DEVICE_KEY=… node rig/online-check.mjs partly   <a class NOT saved here> <another class NOT saved here>
 //   CB_BASE=…                     DEVICE_KEY=… node rig/online-check.mjs offline  <a class that IS saved here>
+//   CB_BASE=…                     DEVICE_KEY=… node rig/online-check.mjs never
 //
 // fresh    a new profile; the setup link is opened, Get ready is NOT pressed; the network is on. A lesson video of each
 //          of Classes 1 to 5 plays and scrubs ahead, a storybook is read aloud by Jugnu, the big flight's map opens
@@ -17,6 +18,10 @@
 //          lesson B's player each say "This needs the internet" (never a blank or a dead player); lesson A's page is
 //          whole; Home still opens; a saved storybook is read aloud, the saved quiz and the saved game open; nothing
 //          reaches the server or the media store.
+// never    the `fresh` profile again (it never ran Get ready; it only played a few things while online), the
+//          network truly off: the home opens from what was kept as it loaded; a storybook, a game, a quiz and a
+//          lesson that were never opened each say "This needs the internet", with a way on (Home, or back); nothing
+//          is blank; nothing reaches the server.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,8 +29,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [mode, arg1, arg2] = process.argv.slice(2);
 const unsaved = arg1, unseen = arg2, savedClass = arg1; // partly: <unsaved> <unseen>; offline: <saved>
-if (!['fresh', 'partly', 'offline'].includes(mode) || (mode !== 'fresh' && !arg1) || (mode === 'partly' && !arg2)) { console.error('usage: node rig/online-check.mjs fresh | partly <unsaved class> <another unsaved class> | offline <saved class>'); process.exit(1); }
-if (mode === 'fresh' && !process.env.CB_PROFILE) process.env.CB_PROFILE = '.chrome-profile-online';
+if (!['fresh', 'partly', 'offline', 'never'].includes(mode) || (['partly', 'offline'].includes(mode) && !arg1) || (mode === 'partly' && !arg2)) { console.error('usage: node rig/online-check.mjs fresh | partly <unsaved class> <another unsaved class> | offline <saved class> | never'); process.exit(1); }
+if ((mode === 'fresh' || mode === 'never') && !process.env.CB_PROFILE) process.env.CB_PROFILE = '.chrome-profile-online';
 const { launch, shot, BASE, controlled } = await import('./cb.mjs');
 const KEY = process.env.DEVICE_KEY;
 const OFFLINE = path.join(ROOT, 'OFFLINE');
@@ -271,6 +276,66 @@ try {
     check("NO NETWORK: the saved big flight opens its map", g.map && g.islands > 0, g.map ? `${g.islands} islands` : `no map: ${g.text}`);
     const rows = serverRows(mark);
     check('NO NETWORK: nothing reached the server, and nothing came from the media store', rows.filter((r) => !r.dropped).length === 0 && fromNet.length === 0, `${rows.filter((r) => r.dropped).length} connections dropped, ${rows.filter((r) => !r.dropped).length} answered; ${fromDrive.length} media answers from the drive, ${fromNet.length} from the store`);
+  }
+  if (mode === 'never') {
+    await page.goto(`${BASE}/cb?stay=1`, { waitUntil: 'load' });
+    const never = await page.evaluate(() => ({ run: localStorage.getItem('cb-run'), worker: !!navigator.serviceWorker.controller }));
+    check('this profile never ran Get ready (the offline worker is there: it came with the first page)', never.run === null && never.worker === true);
+    await home(); // online once more, as a Chromebook is before its Wi-Fi goes: the pilot's own page code is the current one
+    await page.waitForTimeout(1500);
+    fs.writeFileSync(OFFLINE, ''); await ctx.setOffline(true); await page.waitForTimeout(2500);
+    const mark = new Date().toISOString(); fromNet.length = 0;
+    const needs = () => page.evaluate(() => ({ page: !!document.querySelector('[data-cb-needs-net]'), card: ((document.querySelector('[data-cb-needs-list]') || {}).innerText || '').replace(/\s+/g, ' '), h1: ((document.querySelector('h1') || {}).innerText || ''), home: !!document.querySelector('a[href="/cb/home"]'), blank: document.body.innerText.trim().length < 20, text: document.body.innerText.replace(/\s+/g, ' ').slice(0, 110) }));
+    const h = await home();
+    check('NO NETWORK: the child home opens (kept as it loaded while online)', h.doors === 3, h.text);
+    // a storybook that was never opened: Jugnu's own "could not open" screen, with the plain words over it
+    await page.goto(`${BASE}/cb/home#stories`, { waitUntil: 'load', timeout: 45000 }).catch(() => {});
+    await page.waitForSelector('.wqs-book', { timeout: 20000 }).catch(() => {});
+    const books = await page.locator('.wqs-book').count();
+    await page.locator('.wqs-book').nth(Math.min(2, books - 1)).click({ timeout: 8000 }).catch(() => {});
+    await page.waitForSelector('[data-cb-needs-list]', { timeout: 15000 }).catch(() => {});
+    const b = await needs();
+    const way = await page.evaluate(() => [...document.querySelectorAll('[data-tap="retry"], [data-tap="back"], .wq-homebtn, a.wq-door')].filter((x) => x.offsetParent !== null).length);
+    check('NO NETWORK: a storybook never opened says "This needs the internet" (not only "Jugnu could not open this"), with a way on', /This needs the internet/.test(b.card) && !b.blank && way > 0, `${b.card.slice(0, 90)} · ${way} buttons to go on`);
+    await shot(page, 'never-book');
+    // a game never opened: the Games door's list was seen online, the game's own page was not
+    await page.goto(`${BASE}/cb/home#games`, { waitUntil: 'load', timeout: 45000 }).catch(() => {});
+    await page.waitForSelector('a.wq-drow', { timeout: 20000 }).catch(() => {});
+    const row = page.locator('a.wq-drow[href^="/c/"]').first();
+    const gname = (await row.innerText().catch(() => '')).replace(/\s+/g, ' ').slice(0, 30);
+    await row.click({ timeout: 8000 }).catch(() => {});
+    await page.waitForSelector('[data-cb-needs-net]', { timeout: 15000 }).catch(() => {});
+    const g = await needs();
+    check(`NO NETWORK: a game never opened ("${gname}") is the "This needs the internet" page, with Home`, g.page && /This needs the internet/.test(g.h1) && g.home, g.text);
+    await page.click('a[href="/cb/home"]').catch(() => {});
+    await page.waitForSelector('a.wq-door', { timeout: 20000 }).catch(() => {});
+    check('…and Home opens the home again', (await page.locator('a.wq-door').count()) === 3);
+    // a class quiz whose link was never opened on this Chromebook
+    await page.evaluate(() => { location.href = '/q/NEVER01'; }).catch(() => {});
+    await page.waitForSelector('[data-cb-needs-net]', { timeout: 15000 }).catch(() => {});
+    const q = await needs();
+    check('NO NETWORK: a quiz never opened is the "This needs the internet" page, with Home', q.page && /This needs the internet/.test(q.h1) && q.home, q.text);
+    await shot(page, 'never-quiz');
+    await page.click('a[href="/cb/home"]').catch(() => {});
+    await page.waitForSelector('a.wq-door', { timeout: 20000 }).catch(() => {});
+    // a lesson never opened: the Videos door's list (of the class last looked at) was seen online
+    await page.evaluate(() => { location.hash = '#videos'; }).catch(() => {});
+    await page.waitForSelector('.wq-vcard', { timeout: 20000 }).catch(() => {});
+    const cards = await page.locator('.wq-vcard').count();
+    let lessonSaid = null;
+    for (let i = cards - 1; i >= Math.max(0, cards - 4) && !lessonSaid; i -= 1) { // (from the end: the first ones were played online)
+      await page.locator('.wq-vcard').nth(i).locator('.wq-vtap').first().click({ timeout: 8000 }).catch(() => {});
+      await page.waitForSelector('[data-cb-needs-net], [data-cb-needs-video], [data-cb-needs-list]', { timeout: 12000 }).catch(() => {});
+      const n = await needs();
+      const over = await page.evaluate(() => ((document.querySelector('[data-cb-needs-video]') || {}).innerText || '').replace(/\s+/g, ' '));
+      if (n.page || over || n.card) lessonSaid = n.page ? 'the page: ' + n.h1 : over ? 'over the player: ' + over : 'a card: ' + n.card;
+      else { await page.goto(`${BASE}/cb/home#videos`, { waitUntil: 'load', timeout: 30000 }).catch(() => {}); await page.waitForSelector('.wq-vcard', { timeout: 15000 }).catch(() => {}); }
+    }
+    check('NO NETWORK: a lesson never opened says it needs the internet', cards > 0 && /needs the internet|انٹرنیٹ/.test(lessonSaid || ''), cards ? (lessonSaid || 'nothing said').slice(0, 110) : 'the Videos door listed no lessons');
+    await shot(page, 'never-lesson');
+    await page.waitForTimeout(1500);
+    const rows = serverRows(mark);
+    check('NO NETWORK: nothing reached the server, and nothing came from the media store', rows.filter((r) => !r.dropped).length === 0 && fromNet.length === 0, `${rows.filter((r) => r.dropped).length} connections dropped, ${rows.filter((r) => !r.dropped).length} answered`);
   }
 } catch (e) {
   check('the run finished', false, String(e && e.message || e).split('\n')[0]);

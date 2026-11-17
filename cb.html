@@ -610,7 +610,8 @@
     var t0 = Date.now();
     // (how much Chrome allows this site is asked now, before anything is being saved: see roomAsk)
     return roomAsked.then(function () { return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }); }).then(function (reg) {
-      return workerSettled(reg, 30000).then(function (how) { if (how !== 'same') log(how === 'new' ? 'a newer version of the offline worker was waiting: it is in charge now' : 'a newer version of the offline worker is still coming in; carrying on'); });
+      var had = !!reg.active; // (the very first install has no older worker to take over from: nothing to say)
+      return workerSettled(reg, 30000).then(function (how) { if (had && how !== 'same') log(how === 'new' ? 'a newer version of the offline worker was waiting: it is in charge now' : 'a newer version of the offline worker is still coming in; carrying on'); });
     }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
       protect().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : p === false ? 'not yet (see "Keep what is saved" on this page: install Jugnu or bookmark this page)' : 'this browser does not say')); }, function () {});
