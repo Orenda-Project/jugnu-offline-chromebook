@@ -101,6 +101,24 @@ export async function playPart(page, opts = {}) {
   for (const w of (battery && battery.check_words) || []) for (const l of ['en', 'ur']) if (w.audio && w.audio[l]) wordOfClip[w.audio[l].split('/').pop()] = w;
   let lastKey = '', lastChange = Date.now(), cur = null, wrongLeft = 0, recStart = 0, oralStart = 0, n = 0, typedFor = '';
   const seen = new Set();
+  // The last screen as the child sees it arrive: every animation frame for three seconds from the moment it is in
+  // the page, one row each time something moves: [ms, page height, bottom of its button, bottom of the screen].
+  await page.evaluate(() => {
+    const out = (window.__cbEndSeries = []); let t0 = 0;
+    const tick = () => {
+      const end = document.querySelector('#sae-root .sae-screen.sae-end');
+      if (end) {
+        if (!t0) t0 = performance.now();
+        const btn = end.querySelector('.sae-btn, button');
+        const row = [Math.round(performance.now() - t0), document.documentElement.scrollHeight, btn ? Math.round(btn.getBoundingClientRect().bottom) : null, Math.round(end.getBoundingClientRect().bottom)];
+        const last = out[out.length - 1];
+        if (!last || last[1] !== row[1] || last[2] !== row[2] || last[3] !== row[3]) out.push(row);
+        if (performance.now() - t0 > 3000) return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }).catch(() => {});
   const anomaly = (a) => { if (!report.anomalies.includes(a)) { report.anomalies.push(a); o.say(`   ! ${a}`); } };
 
   while (Date.now() - t0 < o.maxMs) {
@@ -229,7 +247,8 @@ export async function playPart(page, opts = {}) {
     const r = await act();
     if (r === 'end') {
       // the last screen: where its one button is on the page, and what makes the page taller than the window
-      await page.waitForTimeout(900);
+      await page.waitForTimeout(3200);
+      report.endSeries = await page.evaluate(() => window.__cbEndSeries || []).catch(() => []);
       report.endDom = await page.evaluate(() => {
         const box = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom), Math.round(r.height)]; };
         const scr = document.querySelector('#sae-root .sae-screen'); const btn = document.querySelector('.sae-end .sae-btn, .sae-end button');

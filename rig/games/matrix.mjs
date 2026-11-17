@@ -70,9 +70,10 @@ async function flight(k, off) {
     const cut = r.layout.filter((x) => x.cut && x.cut.length).map((x) => `${x.at.replace('sae-screen.', '')} [${x.cut.join(', ')}]`);
     const scrolls = Object.values(r.scrolls || {}).reduce((a, n) => a + n, 0);
     const row = { part, session: sid, stones: st.stones.length, ended: r.results.length, results: r.results, sounds: `${r.media.played}/${r.media.tried}`, sound_failures: r.media.failed, cut, scrolls, anomalies: r.anomalies,
-      back: back.back, card: !!back.card, card_rows: back.rows || [], device, end: r.endDom || null, seconds: Math.round(r.ms / 1000), ok: !r.anomalies.length && back.back && r.results.length === st.stones.length };
+      back: back.back, card: !!back.card, card_rows: back.rows || [], device, end: r.endDom || null, end_series: r.endSeries || [], seconds: Math.round(r.ms / 1000), ok: !r.anomalies.length && back.back && r.results.length === st.stones.length };
     k.out.flight.push(row);
     k.say(`  ${row.ok ? 'OK  ' : 'FAIL'} ${part}: ${row.ended}/${row.stones} stones ended · sounds ${row.sounds}${r.media.failed.length ? ' FAILED ' + r.media.failed.slice(0, 3).join(', ') : ''} · cut ${cut.length} · scrolls ${scrolls} · back ${back.back ? (back.card ? 'card' : 'map, no card') : 'NO'} · ${row.seconds} s${r.anomalies.length ? ' · ' + r.anomalies.join(' | ') : ''}`);
+    if (r.endSeries && r.endSeries.length) k.say(`       last screen as it arrives [ms, page px, button bottom, screen bottom]: ${r.endSeries.slice(0, 12).map((x) => x.join('/')).join('  ')}`);
     if (r.endDom) k.say(`       last screen: page ${r.endDom.doc}px in a ${r.endDom.win}px window, "Go back" at ${r.endDom.button ? r.endDom.button[0] + '-' + r.endDom.button[1] : '?'}px, zoom ${r.endDom.zoom || 'none'}`);
     k.say(`       ${r.results.map((x) => `${x.task}=${x.stop}${x.correct != null ? `(${x.correct}/${x.attempted})` : ''}${x.audio ? '[' + x.audio + ']' : ''}`).join(' ')}`);
     save(k);
