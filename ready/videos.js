@@ -18,9 +18,12 @@
   var MEDIA = /https?:\/\/[^"'\s\\<>]+?\.(mp4|webm|m4v|mov|mp3|m4a|ogg|opus|wav|webp|png|jpe?g)(?:\?[^"'\s\\<>]*)?/g;
   var lsJson = function (k, d) { try { var v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; } catch (e) { return d; } };
   var mb = function (n) { return n >= 1000 ? (n / 1000).toFixed(1) + ' GB' : Math.round(n) + ' MB'; };
-  var libUrl = function (hub, kid, lang, grade, own, subject) {
-    // exactly the address the Videos door asks for (wq-doors.js libUrl): a saved copy is found by its exact address
-    return '/api/wq/lib/h/' + encodeURIComponent(hub) + '?kid=' + encodeURIComponent(kid || '') + '&l=' + lang + (String(grade) !== String(own) ? '&g=' + encodeURIComponent(grade) : '') + (subject ? '&s=' + encodeURIComponent(subject) : '');
+  var libUrl = function (hub, kid, lang, grade, subject) {
+    // exactly the address the Videos door asks for (wq-doors.js libUrl): a saved copy is found by its exact address.
+    // `grade` null: the home child's own class, which the door asks for with no "g". Which class that is can change
+    // (Jugnu works it out from what the child last did), so every class is ALSO saved under its own "g=<class>", and
+    // Who's playing? always sets the door to the picked child's class by name.
+    return '/api/wq/lib/h/' + encodeURIComponent(hub) + '?kid=' + encodeURIComponent(kid || '') + '&l=' + lang + (grade == null ? '' : '&g=' + encodeURIComponent(grade)) + (subject ? '&s=' + encodeURIComponent(subject) : '');
   };
   var pageUrl = function (v) { return '/q/' + encodeURIComponent(v.code) + '?k=' + encodeURIComponent(v.k) + '&via=videos'; };
   /** The media a lesson's page names: its video, its pictures, its clips (addresses as the page wrote them). */
@@ -47,7 +50,7 @@
   async function run(ctx) {
     var json = function (u) { return fetch(u).then(function (r) { if (!r.ok) throw new Error('the list did not load (' + r.status + ')'); return r.json(); }); };
     if (!ctx.kid) throw new Error('no child id: the child home did not open');
-    var top = await json(libUrl(ctx.hub, ctx.kid, 'en', '', ''));
+    var top = await json(libUrl(ctx.hub, ctx.kid, 'en', null));
     var own = String(top.grade);
     var grades = (top.grades || []).map(function (x) { return String(x.g); });
     ctx.note('cb-home-grade', own);
@@ -61,9 +64,9 @@
       var label = 'Class ' + g;
       ctx.setPct(null, label + ': reading the lists…');
       // 1. the lists
-      var subjects = ((await json(libUrl(ctx.hub, ctx.kid, 'en', g, own))).subjects || []).map(function (s) { return s.key; });
+      var subjects = ((await json(libUrl(ctx.hub, ctx.kid, 'en', g))).subjects || []).map(function (s) { return s.key; });
       var lessons = [];
-      for (var si = 0; si < subjects.length; si += 1) lessons = lessons.concat(lessonsOf(await json(libUrl(ctx.hub, ctx.kid, 'en', g, own, subjects[si])), subjects[si]));
+      for (var si = 0; si < subjects.length; si += 1) lessons = lessons.concat(lessonsOf(await json(libUrl(ctx.hub, ctx.kid, 'en', g, subjects[si])), subjects[si]));
       var total = lessons.reduce(function (a, v) { return a + v.mb; }, 0);
       sizes[g] = { n: lessons.length, mb: Math.round(total) };
       ctx.note('cb-video-sizes', sizes);
@@ -76,7 +79,9 @@
       }
       // 3. the lists as the door will ask for them, both languages, saved afresh (they now name every lesson's page)
       var lists = [];
-      LANGS.forEach(function (l) { lists.push(libUrl(ctx.hub, ctx.kid, l, g, own)); subjects.forEach(function (s) { lists.push(libUrl(ctx.hub, ctx.kid, l, g, own, s)); }); });
+      (g === own ? [g, null] : [g]).forEach(function (as) {
+        LANGS.forEach(function (l) { lists.push(libUrl(ctx.hub, ctx.kid, l, as)); subjects.forEach(function (s) { lists.push(libUrl(ctx.hub, ctx.kid, l, as, s)); }); });
+      });
       var pics = [];
       lessons.forEach(function (v) { [v.thumb, v.poster, v.art].forEach(function (u) { if (u && pics.indexOf(u) < 0) pics.push(u); }); });
       var quiet = { each: function () {} };
@@ -155,21 +160,21 @@
   /* Check this Chromebook: every saved lesson, from the saved copy alone. Its page must be there, its video must open
    * in a real player (its length is read), and its quiz clips must be on the drive. */
   async function check(t) {
-    var rows = [], hub = t.hub(), kid = t.kid(), own = t.ls('cb-home-grade') || '';
+    var rows = [], hub = t.hub(), kid = t.kid();
     var summary = t.lsJson('cb-videos', {});
     var gs = Object.keys(summary).filter(function (g) { return summary[g] && summary[g].saved; });
     if (!hub || !gs.length) return [];
     for (var gi = 0; gi < gs.length; gi += 1) {
       var g = gs[gi], group = 'Lesson videos, Class ' + g;
-      var top = await t.read(libUrl(hub, kid, 'en', g, own));
+      var top = await t.read(libUrl(hub, kid, 'en', g));
       if (!top) { rows.push({ group: group, name: 'the list of subjects', ok: false, why: 'not saved' }); continue; }
       var subjects = (JSON.parse(top).subjects || []).map(function (s) { return s.key; });
       var lessons = [];
       for (var si = 0; si < subjects.length; si += 1) {
-        var body = await t.read(libUrl(hub, kid, 'en', g, own, subjects[si]));
+        var body = await t.read(libUrl(hub, kid, 'en', g, subjects[si]));
         if (!body) { rows.push({ group: group, name: subjects[si] + ' lessons list', ok: false, why: 'not saved' }); continue; }
         lessons = lessons.concat(lessonsOf(JSON.parse(body), subjects[si]));
-        if (!(await t.read(libUrl(hub, kid, 'ur', g, own, subjects[si])))) rows.push({ group: group, name: subjects[si] + ' lessons list (Urdu)', ok: false, why: 'not saved' });
+        if (!(await t.read(libUrl(hub, kid, 'ur', g, subjects[si])))) rows.push({ group: group, name: subjects[si] + ' lessons list (Urdu)', ok: false, why: 'not saved' });
       }
       for (var i = 0; i < lessons.length; i += 1) {
         var v = lessons[i], name = v.subject + ': ' + v.title;

@@ -144,12 +144,11 @@
     // A new child on this Chromebook: the quiz forgets the last child's session.
     try { Object.keys(localStorage).filter(function (k) { return /^wq_s_/.test(k); }).forEach(function (k) { localStorage.removeItem(k); }); } catch (e) { /* storage off */ }
     // The Videos door opens on this child's class (lane/home). This Chromebook's home is one child for everybody, and
-    // Jugnu remembers a class per child (wq_sel_videos.<child>): the pick sets it. With no network it is set only when
-    // that class's videos are saved here, so the door never opens on an empty list.
+    // Jugnu remembers a class per child (wq_sel_videos.<child>): the pick sets it, by name. With no network it is
+    // set only when that class's videos are saved here; else the door is left on the home child's own class.
     try {
-      var chip = get('cb-kid'), own = get('cb-home-grade'), vids = JSON.parse(get('cb-videos') || '{}');
-      var other = String(grade) === String(own) ? '' : String(grade);
-      if (chip && own && (!other || navigator.onLine || (vids[other] && vids[other].saved))) set('wq_sel_videos.' + chip, other);
+      var chip = get('cb-kid'), vids = JSON.parse(get('cb-videos') || '{}');
+      if (chip) set('wq_sel_videos.' + chip, navigator.onLine || (vids[String(grade)] && vids[String(grade)].saved) ? String(grade) : '');
     } catch (e) { /* storage off */ }
     post('/__cb/identity', { event: 'picked', student_id: kid.student_id, local_id: kid.local_id || null, name: kid.name, grade: grade, section: section, school_id: R.school.id, added: kid.added });
     location.href = '/cb?picked=1';

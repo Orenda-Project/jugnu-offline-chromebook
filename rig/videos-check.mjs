@@ -45,16 +45,20 @@ try {
   await page.locator('.tile.name').first().click();
   await page.waitForURL(/\/cb\?picked=1/, { timeout: 15000 });
   const picked = await page.evaluate(() => { const c = JSON.parse(localStorage.getItem('cb-child') || 'null'); return c ? { grade: c.grade, sel: localStorage.getItem('wq_sel_videos.' + localStorage.getItem('cb-kid')) } : null; });
-  check(`offline: a Class ${grade} child is picked on Who's playing?`, picked && String(picked.grade) === String(grade), picked ? `the Videos door is set to ${picked.sel === '' ? 'the home class' : 'Class ' + picked.sel}` : '');
+  check(`offline: a Class ${grade} child is picked on Who's playing?, and the Videos door is set to Class ${grade}`, picked && String(picked.grade) === String(grade) && picked.sel === String(grade), picked ? `door: ${picked.sel === '' ? 'left on the home class' : 'Class ' + picked.sel}` : '');
 
   await page.goto(`${BASE}/cb/home#videos`, { waitUntil: 'load' });
   await page.waitForSelector('#wq[data-m="H3-videos"][data-fetch="done"] .wq-vcard', { timeout: 20000 }).catch(() => {});
   const door = await page.evaluate(() => ({ cards: document.querySelectorAll('.wq-vcard').length, label: (document.querySelector('.wq-vgl') || {}).innerText || '', shelves: document.querySelectorAll('[data-vshelf]').length, fetch: document.getElementById('wq').getAttribute('data-fetch'), text: document.body.innerText.replace(/\s+/g, ' ').slice(0, 120) }));
   check(`offline: the Videos door opens on Class ${grade} with every lesson`, door.cards === have[grade].n && new RegExp(`\\b${grade}\\b`).test(door.label), `${door.cards} lessons on ${door.shelves} shelves, picker says "${door.label.trim()}"`);
   await shot(page, `videos-offline-door-class-${grade}`);
-  // (pictures load as they scroll into view: the ones on screen are the ones to judge)
-  const thumbs = await page.evaluate(() => { const im = [...document.querySelectorAll('.wq-vtimg')].filter((i) => { const r = i.getBoundingClientRect(); return r.width > 0 && r.top < innerHeight && r.bottom > 0 && r.left < innerWidth && r.right > 0; }); return { n: im.length, drawn: im.filter((i) => i.complete && i.naturalWidth > 0).length }; });
-  check('offline: the lesson pictures on screen are drawn', thumbs.n > 0 && thumbs.drawn === thumbs.n, `${thumbs.drawn} of ${thumbs.n}`);
+  // (a picture is only drawn once its card scrolls into view, so each lesson's picture is asked for instead)
+  const thumbs = await page.evaluate(async () => {
+    const im = [...document.querySelectorAll('.wq-vtimg')]; let got = 0;
+    for (const i of im) { try { const r = await fetch(i.getAttribute('src'), { mode: 'no-cors' }); if (r.status === 200 && /^image\//.test(r.headers.get('content-type') || '')) got += 1; } catch (e) { /* not on the drive */ } }
+    return { n: im.length, got, drawn: im.filter((i) => i.complete && i.naturalWidth > 0).length };
+  });
+  check('offline: every lesson\'s picture is on the drive', thumbs.n > 0 && thumbs.got === thumbs.n && thumbs.drawn > 0, `${thumbs.got} of ${thumbs.n} (${thumbs.drawn} drawn so far, the ones in view)`);
 
   // Lessons spread across the door: first, middle, last, …
   const total = door.cards;
