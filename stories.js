@@ -8,6 +8,9 @@
  *    will listen when the internet is back", and the page's "page read" step is tagged (x-cb-recs) so the offline
  *    worker keeps it on the device instead of sending numbers nobody has heard yet. A read with no voice in it at all
  *    is not saved: Jugnu's own "let's read it together" answers it.
+ *    Where the scorer that runs on this Chromebook can score it (speech/jugnu-speech.js: English and Urdu passages), it
+ *    does, at once: "Listening…", the words it heard light up, and the page answers with words and stars, never a
+ *    speed. The recording is still kept and heard again online: the speech service's count is the one the server gets.
  * 2. Back online: each saved reading is played to Jugnu's speech service exactly as a live read is (a one-read key
  *    from /api/wq/lr/key, the same stream, Jugnu's own word matcher WQLiveRead.matcher), the page's real numbers
  *    replace the provisional ones, and every kept story step is sent to the server, oldest first, per child and book.
@@ -23,9 +26,10 @@
   var QUIET_MS = 6000;        // Your turn with no live words: this long with no voice after some reading ends the read
   var ECHO_QUIET_MS = 1500;   // "Read it together": one sentence, said back
   var COPY = {
-    en: { reading: 'Read it aloud! Jugnu is saving your reading.', saved: 'Saved! Jugnu will listen when the internet is back.' },
-    ur: { reading: 'اونچی آواز میں پڑھیں! جگنو آپ کی پڑھائی محفوظ کر رہا ہے۔', saved: 'آپ کی پڑھائی محفوظ ہو گئی! انٹرنیٹ آتے ہی جگنو اسے سنے گا۔' },
+    en: { reading: 'Read it aloud! Jugnu is saving your reading.', saved: 'Saved! Jugnu will listen when the internet is back.', checking: 'Listening…' },
+    ur: { reading: 'اونچی آواز میں پڑھیں! جگنو آپ کی پڑھائی محفوظ کر رہا ہے۔', saved: 'آپ کی پڑھائی محفوظ ہو گئی! انٹرنیٹ آتے ہی جگنو اسے سنے گا۔', checking: 'آپ کی آواز سنی جا رہی ہے…' },
   };
+  var LIT_MS = 900;           // the words Jugnu heard stay lit this long before the page answers the read
   var noop = function () {};
   function report(o) { try { fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stories: o }) }).catch(noop); } catch (e) { /* no network: nothing to say */ } }
 
@@ -135,7 +139,23 @@
     return E;
   }
 
+  // The scorer that runs on this Chromebook (speech/jugnu-speech.js, saved by Get ready): asked for when the reader
+  // is, so it is there by the first Your turn. Not there (not saved, an old Get ready): the read is saved for later.
+  var speech = null;
+  function loadSpeech() {
+    if (!speech) {
+      speech = (window.JugnuMatch ? Promise.resolve() : script('/__cb/speech/match.js'))
+        .then(function () { return window.JugnuSpeech ? null : script('/__cb/speech/jugnu-speech.js'); })
+        .then(function () { return window.JugnuSpeech || null; }, function () { return null; });
+    }
+    return speech;
+  }
+  function onDevice(L) { var J = window.JugnuSpeech; try { return !!(J && J.can && J.can(L, 'passage') === 'device'); } catch (e) { return false; } }
+  // its model is 0.3-0.5 GB of memory: given back when the child leaves the book
+  window.addEventListener('hashchange', function () { if (!/^#story\//.test(String(location.hash || '')) && window.JugnuSpeech && window.JugnuSpeech.release) { try { window.JugnuSpeech.release(); } catch (e) { /* none loaded */ } } });
+
   hook('WQLiveRead', function (LR) {
+    loadSpeech();
     var mount0 = LR.mount;
     LR.mount = function (el, o) {
       var scr = el && el.closest ? el.closest('[data-screen]') : null;
@@ -155,10 +175,11 @@
         if (S.local) return;
         S.local = true;
         var nd = el.querySelector('.lr-nudge');
-        if (nd && turn) { nd.style.display = 'none'; var p = document.createElement('p'); p.className = 'lr-nudge'; p.setAttribute('data-cb-nudge', ''); p.textContent = COPY[L].reading; nd.parentNode.insertBefore(p, nd); }
+        if (nd && turn && !onDevice(L)) { nd.style.display = 'none'; var p = document.createElement('p'); p.className = 'lr-nudge'; p.setAttribute('data-cb-nudge', ''); p.textContent = COPY[L].reading; nd.parentNode.insertBefore(p, nd); }
       }
       var o2 = Object.assign({}, o);
-      if (S.local && turn) o2.copy = Object.assign({}, o.copy, { readNow: COPY[L].reading, keepGoing: COPY[L].reading });
+      // a read that can only be saved says so while the child reads; one scored on this Chromebook keeps Jugnu's own line
+      if (S.local && turn && !onDevice(L)) o2.copy = Object.assign({}, o.copy, { readNow: COPY[L].reading, keepGoing: COPY[L].reading });
       o2.getKey = function () {
         var local = { api_key: LOCAL_KEY, ws: 'wss://saved.invalid/', model: 'none', lang: L };
         if (S.local) return Promise.resolve(local);
@@ -184,24 +205,65 @@
           return o.onResult ? o.onResult(r) : undefined;
         }
         var id = uid(), key = String(o.id || ''), bp = /^(.*):(\d+)$/.exec(key) || [0, key, 0];   // o.id: '<book>:<page number>'
-        var row = { id: id, at: Date.now(), book: bp[1], page: Number(bp[2]), lang: L, repeat: o.repeat === true, n: n, ms_prov: Math.max(0, Math.round(r.ms || 0)), ended: r.ended || 'done_tap',
-          dur: Date.now() - rec.at, mime: rec.mime, words: (o.words || []).map(function (w, j) { var x = { t: String(w.t == null ? w : w.t), i: typeof w.i === 'number' ? w.i : j }; if (w.alt) x.alt = w.alt; return x; }), blob: null, tries: 0 };
-        (waiting[key] = waiting[key] || []).push(id);
-        savedPages[key] = 1;
-        rec.stop().then(function (blob) { row.blob = blob; return putOne('rec', row); }).then(function () { sync(); }, function (e) { report({ problem: 'recording_not_saved', why: String(e && e.message || e).slice(0, 80) }); });
-        // the page goes on as a page that was read; its numbers are provisional and never sent as they are
-        var marks = []; for (var j = 0; j < n; j += 1) marks.push('read');
-        var pr = Object.assign({}, r, { words_total: n, words_read: n, correct: n, skipped: 0, marks: marks, live: true });
-        delete pr.absorbed;
-        if (o.onResult) o.onResult(pr);
-        var root = document.getElementById('wq');
-        armed = root ? root.querySelector('[data-screen="story-page"]') : null;
-        note();
+        var row = { id: id, at: Date.now(), book: bp[1], page: Number(bp[2]), lang: L, repeat: o.repeat === true, n: n, ended: r.ended || 'done_tap',
+          dur: Date.now() - rec.at, mime: rec.mime, words: (o.words || []).map(function (w, j) { var x = { t: String(w.t == null ? w : w.t), i: typeof w.i === 'number' ? w.i : j }; if (w.alt) x.alt = w.alt; return x; }), blob: null, tries: 0,
+          // what this read adds to the page's own numbers until the speech service has heard it (taken out again then)
+          prov: { read: n, skipped: 0, ms: Math.max(0, Math.round(r.ms || 0)), idx: [], device: null } };
+        var blob = rec.stop().then(function (b) { row.blob = b; return putOne('rec', row).then(function () { return b; }); });
+        blob.catch(function (e) { report({ problem: 'recording_not_saved', why: String(e && e.message || e).slice(0, 80) }); });
+        /** The page goes on. dv: this Chromebook's own score of the read, or null (the read is only saved). Either way
+         *  the numbers are provisional: the recording stays, and the speech service's count is the one the server gets. */
+        var done = false;
+        var give = function (dv) {
+          if (done || S.gone) return;
+          done = true;
+          var marks = [], j, read = n, skipped = 0;
+          if (dv) {
+            read = 0;
+            for (j = 0; j < n; j += 1) {
+              var st = (dv.words[j] || {}).state;
+              marks.push(st === 'read' ? 'read' : st === 'skipped' ? 'skipped' : 'ahead');
+              if (st === 'read') read += 1; else if (st === 'skipped') { skipped += 1; row.prov.idx.push(row.words[j].i); }
+            }
+            // lit words and stars, never a speed: the page is given no reading time to make one from
+            row.prov = { read: read, skipped: skipped, ms: 0, idx: row.prov.idx, device: dv.engine || 'device' };
+          } else { for (j = 0; j < n; j += 1) marks.push('read'); savedPages[key] = 1; }
+          (waiting[key] = waiting[key] || []).push(id);
+          putOne('rec', row).then(function () { sync(); }, noop);
+          var pr = Object.assign({}, r, { words_total: n, words_read: read, correct: read, skipped: skipped, marks: marks, ms: row.prov.ms, live: true });
+          delete pr.absorbed;
+          if (o.onResult) o.onResult(pr);
+          var root = document.getElementById('wq');
+          armed = !dv && root ? root.querySelector('[data-screen="story-page"]') : armed;
+          note();
+        };
+        if (!onDevice(L)) return give(null);
+        // scored on this Chromebook: "Listening…" while the model hears the recording, then the words it heard light up
+        var nd = el.querySelector('[data-cb-nudge]') || el.querySelector('.lr-nudge');
+        if (nd) nd.textContent = COPY[L].checking;
+        var btn = el.closest ? (el.closest('[data-screen]') || document).querySelector('.wqs-done') : null;
+        if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+        var cap = setTimeout(function () { give(null); }, Math.max(25000, 1.6 * row.dur + 20000));
+        blob.then(function (b) {
+          if (!b) throw new Error('no recording');
+          return window.JugnuSpeech.score(b, row.words.map(function (w) { return w.t; }).join(' '), L, { kind: 'passage', seconds: Math.max(0.5, row.dur / 1000), id: 'cb-' + id });
+        }).then(function (dv) {
+          clearTimeout(cap);
+          if (done) return;
+          if (!dv || dv.pending || !dv.words || dv.words.length !== n) {
+            // not scored here (no model on this device, or it failed): the scorer kept its own copy of the recording, ours is enough
+            if (dv && dv.pending && dv.id && window.JugnuSpeech.later) window.JugnuSpeech.later.take(dv.id).catch(noop);
+            return give(null);
+          }
+          var spans = el.querySelectorAll('.lr-w');
+          for (var j = 0; j < spans.length && j < n; j += 1) spans[j].className = 'lr-w ' + (/lr-box/.test(spans[j].className) ? 'lr-box ' : '') + 'lr-' + (dv.words[j].state === 'read' ? 'read' : dv.words[j].state === 'skipped' ? 'skipped' : 'ahead');
+          setTimeout(function () { give(dv); }, LIT_MS);
+        }, function () { clearTimeout(cap); give(null); });
       };
       handle = mount0.call(this, el, o2);
       return {
         stop: function (why) { return handle.stop(why); },
-        destroy: function () { S.over = true; E.stop(); if (rec) rec.stop(); return handle.destroy(); },
+        destroy: function () { S.over = true; S.gone = true; E.stop(); if (rec) rec.stop(); return handle.destroy(); },
         // a voice in the room counts as "Jugnu can hear you" while no live words can light
         view: function () { var v = handle.view(); return S.local && v && E.voice >= 3 && !(v.heard > 0) ? Object.assign({}, v, { heard: 1 }) : v; },
       };
@@ -348,13 +410,15 @@
                 return { wait: why, status: k.status };
               }
               return hear(LR, k.body, row).then(function (s) {
-                d.words_read = Math.max(0, (Number(d.words_read) || 0) - row.n + s.read);
-                d.skipped = (Number(d.skipped) || 0) + s.skipped;
-                d.ms = Math.max(0, (Number(d.ms) || 0) - row.ms_prov + s.ms);
-                d.skipped_words = d.skipped_words.concat(s.idx);
+                // this read's provisional part (every word, or this Chromebook's own score) comes out, the speech service's goes in
+                var pv = row.prov || { read: row.n, skipped: 0, ms: row.ms_prov || 0, idx: [] };
+                d.words_read = Math.max(0, (Number(d.words_read) || 0) - pv.read + s.read);
+                d.skipped = Math.max(0, (Number(d.skipped) || 0) - pv.skipped + s.skipped);
+                d.ms = Math.max(0, (Number(d.ms) || 0) - pv.ms + s.ms);
+                d.skipped_words = d.skipped_words.filter(function (i) { return pv.idx.indexOf(i) < 0; }).concat(s.idx);
                 if (s.absorbed) d.absorbed = (Number(d.absorbed) || 0) + s.absorbed;
                 d.ended = s.ended;
-                out.push({ read: s.read, total: s.total, ms: s.ms, kb: Math.round(row.blob.size / 1024), lag_s: Math.round((Date.now() - row.at) / 1000) });
+                out.push(Object.assign({ read: s.read, total: s.total, ms: s.ms, kb: Math.round(row.blob.size / 1024), lag_s: Math.round((Date.now() - row.at) / 1000) }, pv.device ? { on_device: pv.read, engine: pv.device } : {}));
                 return null;
               }, function (e) {
                 row.tries = (row.tries || 0) + 1;
