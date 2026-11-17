@@ -73,7 +73,7 @@ A storybook has four parts, and each has its own way of working with no network:
 | Part | Online | With no network |
 |---|---|---|
 | Jugnu reads the page, the words light | the page's stored voice clip and its word times, from Jugnu | the same clip and times from this Chromebook (Get ready saves every book: all grades, English and Urdu) |
-| **Your turn**: the child reads aloud and is graded | live: the microphone is streamed to Jugnu's speech service, each word lights as it is heard | **recorded on the Chromebook, scored later**: the page says "Saved! Jugnu will listen when the internet is back", and the book goes on |
+| **Your turn**: the child reads aloud and is graded | live: the microphone is streamed to Jugnu's speech service, each word lights as it is heard | **scored on the Chromebook** (`speech/`): "Listening…", the words it heard light up, then words and stars (never a speed). The recording is kept and **scored again online** after reconnecting; that score is the one the server gets. Where the Chromebook cannot score, the read is saved and the page says "Saved! Jugnu will listen when the internet is back" |
 | Questions, and the look-back page after a wrong pick | the server checks each tap | checked on the Chromebook from the answers Get ready left on it |
 | What the child did (pages heard, pages read, questions, finished) | sent as it happens | kept on the Chromebook, sent by itself when the network is back |
 
@@ -81,11 +81,13 @@ A storybook has four parts, and each has its own way of working with no network:
   child's home link, so a book saved under one link opens under the next (links last 7 days); keeps every story step
   that could not be sent (IndexedDB `cb-stories`); answers a question's tap from the saved answers; never keeps or
   replays the one-read speech key.
-- **`stories.js`** (on every page): when the speech service cannot be reached (no network, no key in 4 s, or the
-  live words stop mid-read) it records the child's reading beside Jugnu's own reading screen (opus, about 4 KB a
-  second), and after reconnecting plays each recording to the speech service exactly as a live read (a one-read key,
-  the same stream, Jugnu's own word matcher), then sends the page's real numbers. A recording leaves the Chromebook
-  only for the speech service and is deleted once heard. A read with no voice in it is not saved.
+- **`stories.js`** (on every page): when the speech service cannot be reached (no network, no key in 4 s, the
+  browser going offline mid-read, or a voice in the room for 3.5 s with no word back from an open stream) it takes the
+  read over: it records the child's reading beside Jugnu's own reading screen (opus, about 4 KB a second), scores it
+  on the Chromebook where it can (`JugnuSpeech.score`), and after reconnecting plays each recording to the speech
+  service exactly as a live read (a one-read key, the same stream, Jugnu's own word matcher), then sends the page's
+  real numbers. A recording leaves the Chromebook only for the speech service and is deleted once heard. A read with
+  no voice in it is not saved.
 - **`ready/stories.js`** (Get ready): every shelf a child can reach (my grade, All grades, grades 1-5, both
   languages), every book on them, every picture and voice, the reader's own files, each book's answers; it asks for
   the microphone while an adult is at the Chromebook; it checks that each file was kept and says how many were not.
