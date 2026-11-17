@@ -154,8 +154,17 @@ Two things found on the way:
 
 Nursery (68 lessons), KG (28) and Class 6 (195) are listed without a size on sandbox, so they are not in the totals.
 
+**The sizes in Jugnu's lists come and go.** A lesson's size is in the list only when Jugnu happened to look at that
+video lately (it keeps what it learnt for 6 hours). On 17 Nov Classes 1 to 5 all carried sizes; a day later Class 3's
+94 lessons carried none, and on the deployed service Class 1's did not: the log said "112 of 112 lessons (0 MB)" for
+806 MB on the drive, and the check "is there room for the whole class?" worked with a need of 0. So the videos step
+no longer trusts the list. Before it saves a class it reads every lesson's page and asks for each video's real length
+with a one-byte request through `/__cb/media` (the total comes back in `Content-Range`; nothing is downloaded), and
+after saving it reads the bytes back from the drive. The room check, the progress line, the log and the start page
+all use those numbers; a size that could not be read is called an estimate, and one that is not known is not shown.
+
 Each lesson also brings about 1 MB of quiz voice clips (Class 2: 5,815 clips, 77 MB), so a class takes about 13 %
-more than its videos. Saving Class 2 took 9½ minutes on the laptop rig at about 1 MB/s; a school's line decides the
+more than its videos; the room check counts 1.3 MB a lesson for them. Saving Class 2 took 9½ minutes on the laptop rig at about 1 MB/s; a school's line decides the
 rest.
 
 The pilot Chromebook has about 16 GB free: all five classes fit. A class is saved only when the device has room for
@@ -172,3 +181,62 @@ that is the wrong road. Either of these lets each Chromebook fetch from Cloudfla
   which also lets a school's own cache or a neighbour Chromebook serve them.
 
 And a "pack" list per grade (lesson → file, size, checksum) so a device can ask for exactly what it lacks.
+
+## 6. Protected from clean-up
+
+**The risk.** When a device's drive runs low, Chrome clears the saved files of sites it does not count as
+important, a whole site at a time. After Get ready that is 1.4 GB on a Chromebook. A site that holds *persistent
+storage* is passed over. A page asks for it with `navigator.storage.persist()`; Chrome never shows a question, it
+decides by rule.
+
+**The rule** (Chromium `chrome/browser/storage/persistent_storage_permission_context.cc` and
+`chrome/browser/engagement/important_sites_util.cc`, read 18 Nov 2026; the same code on ChromeOS and desktop):
+
+| Chrome says yes when the site is… | Notes |
+|---|---|
+| **installed as an app** | Any installed web app counts, installed by a person or by the school's admin. Only an `https` site counts |
+| **bookmarked** | When the profile has 5 bookmarks or fewer, every bookmarked site. With more, the 5 most used |
+| **much used** | Site engagement of 15 or more. At most 15 points can be earned in a day, so about a day of real use |
+| allowed to send notifications | Not used by the pilot |
+
+and the site must be among the profile's 10 most important sites for the last three. Chrome says **no, always**, in
+a Guest session, where site data is cleared at sign-out, and inside another site's frame. And it only answers when
+asked: a site that qualifies on Tuesday but asked on Monday stays unprotected until it asks again.
+
+**What the pilot does.**
+
+- **It can be installed.** `/cb/app.webmanifest` (name, start page, standalone, Jugnu's own icon) is linked from the
+  start page. Chrome 156 finds the page installable, on the rig and on the deployed https service (its own check
+  reports no errors and it offers the install).
+- **It asks every time.** The start page asks when it opens, after Get ready, after an install and every minute
+  until it is held; `boot.js` asks on every Jugnu page. Whichever condition becomes true is picked up by itself.
+- **It says where it stands.** The start page's "Keep what is saved" card reads "Protected." or "Not protected
+  yet", with how much is at stake and what to do: an **Install Jugnu on this Chromebook** button (shown when Chrome
+  offers the install), or bookmark the page. The header line says it too, and the server is told
+  (`/__cb/report` → `protect: {persisted, installed, …}`), so a fleet view can list unprotected Chromebooks.
+
+**Proven on the rig** (`rig/persist-check.mjs`, 10 of 10, on Chrome 156.0.8078.82, the Chromebook's own version):
+a new profile is not protected and the start page says so and offers Install; a profile whose only bookmark is the
+start page is protected at its first open (asked for by `boot.js` on a quiz page), the start page says "Protected."
+and the server is told; a profile that opens and taps the start page is protected by Chrome itself after 9 opens
+(site engagement 15).
+
+**What still needs the real Chromebook.**
+
+1. **The installed-app route.** It needs `https` and a real install, which puts an app on the machine's shelf, so it
+   was not done on the laptop. On the Chromebook: open the start page, press **Install Jugnu on this Chromebook**;
+   the card must turn to "Protected." within a minute. This is the route for the fleet: the school's Google admin
+   force-installs `https://<service>/cb` for the device OU (Devices › Chrome › Apps & extensions › Add by URL ›
+   Force install), and each Chromebook is protected the first time any Jugnu page opens.
+2. **That the account keeps its data.** In Guest, or with "clear site data on exit" set by policy, Chrome never
+   protects a site, and the start page will say "Not protected yet, although Jugnu is installed".
+3. **A full drive.** That Chrome under real pressure passes over the protected site was not tried (it means filling
+   a drive).
+
+Not covered by any of this: a powerwash, removing the account from the Chromebook, and ChromeOS removing whole
+accounts that are not signed in when the drive is nearly full. One shared school account that is always the one
+signed in is not removed that way.
+
+**A trap in the rig.** `rig/cb.mjs` grants the microphone through the browser's debugging port. A permission granted
+that way makes Chrome refuse every other, persistent storage included, so every ordinary rig run reports "not yet
+protected" whatever the site does. `rig/persist-check.mjs` opens its own browser without it.

@@ -1,5 +1,7 @@
-// "Is there room for the whole class?" on a class whose list carries no sizes, for real: this profile's room is cut
-// down (Chrome's own quota override for the site), a class is ticked, Get ready is pressed.
+// "Is there room for the whole class?" on a class whose list carries no sizes, for real: what Chrome lets this site
+// keep is cut down (its own quota override for the site), a class is ticked, Get ready is pressed.
+// The override cuts the REAL allowance and leaves navigator.storage.estimate() saying "10 GB free", which is what a
+// Chromebook's drive filling up looks like to a page: the estimate never moves.
 //   CB_BASE=http://localhost:8813 DEVICE_KEY=… node rig/videos-room-check.mjs <class> [room in MB, default 400]
 // Run on a profile that already ran Get ready (rig/ready-check.mjs). The class must not be saved here yet.
 // Expect: the videos step measures the class, says what it needs and what there is, and saves none of its videos.
@@ -26,11 +28,18 @@ try {
     for (const s of subjects) for (const c of (await get('&s=' + encodeURIComponent(s.key))).chapters || []) for (const v of c.videos || []) { n += 1; if (v.mb) withSize += 1; }
     return { n, withSize };
   }, grade);
-  check(`Jugnu's list for Class ${grade} carries no sizes today`, listed.n > 0 && listed.withSize === 0, `${listed.n} lessons, ${listed.withSize} with a size`);
+  // (not a pass or fail: the list's sizes come and go; either way the step must measure for itself)
+  console.log(`      Jugnu's list for Class ${grade} today: ${listed.n} lessons, ${listed.withSize} with a size`);
   const used = await page.evaluate(async () => (await navigator.storage.estimate()).usage);
   await cdp.send('Storage.overrideQuotaForOrigin', { origin: new URL(BASE).origin, quotaSize: Math.round(used + ROOM) });
+  await page.reload({ waitUntil: 'load' }); // the start page asks how much Chrome allows when it opens
+  await page.waitForFunction(() => /Chrome allows/.test(document.getElementById('space').textContent), null, { timeout: 15000 }).catch(() => {});
   const est = await page.evaluate(async () => { const e = await navigator.storage.estimate(); return Math.round((e.quota - e.usage) / 1e6); });
-  check(`this Chromebook now has room for about ${Math.round(ROOM / 1e6)} MB`, Math.abs(est - ROOM / 1e6) < 30, `${est} MB`);
+  const head = await page.evaluate(() => document.getElementById('space').textContent);
+  const shown = /Chrome allows ([\d.]+) (MB|GB) more/.exec(head);
+  const shownMb = shown ? Number(shown[1]) * (shown[2] === 'GB' ? 1000 : 1) : -1;
+  // (Chrome hands room out in blocks of 128 MiB, so what the page can find out is the room rounded down to a block)
+  check(`Chrome now allows this site at most ${Math.round(ROOM / 1e6)} MB more, while its estimate still says ${est} MB are free`, est > 9000 && shownMb <= ROOM / 1e6 && shownMb > ROOM / 1e6 - 140, `the start page: "${head}"`);
   await page.click('#ready');
   await page.waitForFunction(() => { const li = document.querySelector('#steps li[data-step="x-lesson-videos"]'); return li && (li.className === 'bad' || li.className === 'ok') && !document.getElementById('ready').disabled; }, null, { timeout: 900000, polling: 2000 });
   const row = await page.evaluate(() => { const li = document.querySelector('#steps li[data-step="x-lesson-videos"]'); return { cls: li.className, text: li.textContent.replace(/\s+/g, ' ').trim(), log: document.getElementById('log').textContent.trim().split('\n').filter((l) => /lesson videos/.test(l)), phase: document.getElementById('phase').textContent, tick: [...document.querySelectorAll('#vids label')].map((l) => l.textContent.replace(/\s+/g, ' ').trim()) }; });

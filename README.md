@@ -40,6 +40,8 @@ Chromebook was off the network that day; every line below is a script in `rig/` 
 | **The check finds things** (`rig/check-finds.mjs`, 7 of 7) | A lesson's video, a storybook's page picture and the Games door's list were deleted from the drive: the check named each. Get ready again put them back; the check was clean |
 | **Storybook option voices** (`npm test`) | The first Get ready with honest counts showed 126 storybook sound files "not on the server". Cause: the file-name pattern cut `q1o2-….ogg` down to `o2-….ogg`. Fixed: 356 files for 11 books (was 206), none missing |
 | **Room on the drive** (`rig/storage-audit.mjs`) | Class 2 with everything else: 731 MB really on the drive, 740 MB charged by the browser. (Before the fix, 82 lesson pictures kept as unreadable copies were charged 572 MB.) |
+| **Lesson video sizes are measured** (`npm test`, `rig/ready-check.mjs --videos <class>`) | Jugnu's lists carry a lesson's size only now and then (a class came with none: "112 lessons (0 MB)" for 806 MB kept, and a room check that could never say no). Each video's length is now read before saving (one byte asked through the pilot) and the bytes kept are read back from the drive. SIZES_PROOF |
+| **Protected from clean-up** (`rig/persist-check.mjs`, 10 of 10, Chrome 156) | Chrome clears an unprotected site's files when the drive runs low. A new profile: not protected, the start page says so and offers **Install Jugnu on this Chromebook**. A profile whose only bookmark is the start page: protected at the first open. A profile that uses it: protected by Chrome itself after 9 opens. Still for the Chromebook: the install itself (needs https and puts an app on the shelf) |
 | **A picked child's own home** (`rig/perchild-check.mjs`, 6 of 6, `HOME_PER_CHILD=1`) | A class-list child Jugnu knows gets a home signed for them alone; one Jugnu does not know gets this Chromebook's home, with no empty page in between. Not yet shown with two different real children: sandbox has no class list whose ids are its own students |
 
 ## Who's playing? (class lists on a shared Chromebook)
@@ -277,7 +279,8 @@ with its secrets): `node rig/home-check.mjs` (an expired home link online and wi
 server run with `HOME_TTL_S=40`; `rig/nokey-check.mjs` against a server with no key); `node rig/ready-check.mjs --videos 2 --interrupt --check --check-offline` (Get ready
 with Class 2's lesson videos, the page closed half-way, then Check this Chromebook); `node rig/videos-check.mjs 2`
 (with no network: Who's playing?, the Videos door, lessons played and scrubbed, the questions after);
-`node rig/videos-sizes.mjs` (lesson video sizes per class); `npm test` (the link signer).
+`node rig/videos-sizes.mjs` (lesson video sizes per class, as Jugnu's lists give them); `CB_BASE=http://127.0.0.1:8813 node rig/persist-check.mjs`
+(when Chrome protects the saved files from clean-up); `npm test`.
 
 **On a Chromebook by hand:** sign in to the shared school account (not Guest), open `https://<service>/cb?key=<key>` once, tick
 the classes whose lesson videos to save, tap **Get ready for offline** and wait for "Ready" (it can be closed and
@@ -391,6 +394,13 @@ The learning games need these in Jugnu itself (the pilot covers each today, on i
 - **Silent skips hide for weeks.** 126 storybook option voices asked for under names cut short (404), and a quiz
   closed by its teacher, were being "saved" without a word. Get ready now names what it could not save and why;
   Check this Chromebook opens everything from the device alone.
+- **A size in Jugnu's lesson list is there only when Jugnu looked at that video lately.** A whole class can come
+  with none. Anything that plans room or reports what was saved must measure the files, never trust the list.
+- **Chrome protects a site's files from clean-up only when the site is installed, bookmarked or much used, and only
+  when asked.** A fresh Chromebook that ran Get ready once holds 1.4 GB Chrome may clear. The start page now asks on
+  every open, says where it stands and offers the install (`docs/HOME-AND-VIDEOS.md`, section 6).
+- **A permission granted through the debugging port refuses all the others.** The rig grants the microphone that
+  way, so every ordinary rig run says "not yet protected" whatever the site does.
 - **A server change needs a server restart.** With an old server running, Jugnu answered the new video route with
   a web page (`200 text/html`), and each "video" was saved as 16 KB of HTML. The worker now only saves what this
   site's own media route answered, and never a web page.

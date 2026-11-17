@@ -160,18 +160,60 @@
   // A new version of the worker took over (a deploy while Get ready runs): the old one will never answer. Every open
   // question ends now with "no answer", and the batch it was is asked again of the new worker at once.
   if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', function () { asking.slice().forEach(function (done) { done(null); }); });
-  /* Room on this Chromebook: what Jugnu uses, what is left for it, and whether the browser promised not to clear it. */
+  /* HOW MUCH ROOM IS THERE, REALLY?
+   * navigator.storage.estimate() does not say. Since Chrome 123 it answers "what you use + 10 GB" on every device
+   * with a drive of 10 GB or more (so that no site can read the drive's size): it said "room for 10.7 GB more" here
+   * at 48 MB used and at 1.4 GB used alike. And no page can see how full the drive is.
+   * What a page CAN do is ask the browser to set bytes aside in the site's own private file store. Chrome answers
+   * from the site's real allowance (60 % of the drive's whole size, less what the site already keeps) and refuses
+   * past it (it hands room out in blocks of 128 MiB, so the answer is the room rounded down to a block). Nothing is
+   * written: the probe file is cut back to nothing and removed at once.
+   *   fits(bytes)  true | false | null (this browser cannot be asked)      one question, safe at any quiet moment
+   *   roomAsk()    how many more bytes Chrome would let this site keep     many questions: only while nothing is
+   *                being saved (for a moment the site looks as full as its allowance, and a save would be refused)
+   * The whole allowance (room + used at that moment) does not change, so later "room" is that less what is used. */
+  var ROOM_WORKER = 'onmessage = async function (e) { var out = null; try { var root = await navigator.storage.getDirectory();' +
+    ' var fh = await root.getFileHandle("cb-room-probe", { create: true }); var h = await fh.createSyncAccessHandle();' +
+    ' var fits = function (n) { try { h.truncate(n); return true; } catch (err) { return false; } };' +
+    ' if (e.data.fits != null) out = fits(e.data.fits);' +
+    ' else { var lo = 0, hi = 1073741824; while (hi < 1125899906842624 && fits(hi)) { lo = hi; hi *= 2; }' +
+    ' for (var i = 0; i < 30 && hi - lo > 16777216; i += 1) { var mid = Math.floor((lo + hi) / 2); if (fits(mid)) lo = mid; else hi = mid; } out = lo; }' +
+    ' try { h.truncate(0); } catch (err) {} h.close(); await root.removeEntry("cb-room-probe"); } catch (err) { out = null; } postMessage(out); };';
+  function roomProbe(msg) {
+    return new Promise(function (ok) {
+      try {
+        var w = new Worker(URL.createObjectURL(new Blob([ROOM_WORKER], { type: 'text/javascript' })));
+        var t = setTimeout(function () { w.terminate(); ok(null); }, 8000);
+        w.onmessage = function (e) { clearTimeout(t); w.terminate(); ok(e.data); };
+        w.onerror = function () { clearTimeout(t); w.terminate(); ok(null); };
+        w.postMessage(msg);
+      } catch (e) { ok(null); }
+    });
+  }
+  function fits(bytes) { return roomProbe({ fits: Math.ceil(bytes) }); }
+  var allowance = null; // everything Chrome lets this site keep on this Chromebook, in bytes (null: not asked, or cannot be)
+  function roomAsk() {
+    var st = navigator.storage;
+    if (!st || !st.estimate) return Promise.resolve(null);
+    return roomProbe({}).then(function (more) {
+      if (more == null) return null;
+      return st.estimate().then(function (e) { allowance = more + (e.usage || 0); return more; }, function () { return null; });
+    });
+  }
+  /* Room on this Chromebook: what Jugnu uses, what Chrome would still let it keep (`room`: real; `free`: only what
+   * estimate() says, for a browser that cannot be asked), and whether the browser promised not to clear it. */
   function space() {
     var st = navigator.storage;
-    if (!st || !st.estimate) return Promise.resolve({ used: 0, free: null, safe: null });
+    if (!st || !st.estimate) return Promise.resolve({ used: 0, free: null, room: null, safe: null });
     return st.estimate().then(function (e) {
-      return Promise.resolve(st.persisted ? st.persisted() : null).then(function (p) { return { used: e.usage || 0, quota: e.quota || 0, free: e.quota ? Math.max(0, e.quota - (e.usage || 0)) : null, safe: p }; });
-    }, function () { return { used: 0, free: null, safe: null }; });
+      var used = e.usage || 0;
+      return Promise.resolve(st.persisted ? st.persisted() : null).then(function (p) { return { used: used, quota: e.quota || 0, free: e.quota ? Math.max(0, e.quota - used) : null, room: allowance == null ? null : Math.max(0, allowance - used), safe: p }; });
+    }, function () { return { used: 0, free: null, room: null, safe: null }; });
   }
   function status() {
     var on = navigator.onLine; $('net').textContent = on ? 'online' : 'OFF'; $('net').className = 'state' + (on ? '' : ' off');
     ask({ type: 'stats' }).then(function (s) { if (s) $('kept').textContent = s.kept; });
-    space().then(function (s) { $('space').textContent = mb(s.used) + ' used' + (s.free == null ? '' : ', room for ' + mb(s.free) + ' more') + (s.safe === false ? ' · not yet protected from clean-up' : s.safe === true ? ' · protected from clean-up' : ''); });
+    space().then(function (s) { $('space').textContent = mb(s.used) + ' used' + (s.room == null ? '' : ', Chrome allows ' + mb(s.room) + ' more here') + (s.safe === false ? ' · not yet protected from clean-up' : s.safe === true ? ' · protected from clean-up' : ''); });
     ask({ type: 'outbox' }).then(function (l) {
       if (!l || !l.length) return;
       $('step3').classList.remove('hidden');
@@ -478,7 +520,7 @@
   function context() {
     return { cfg: CFG, hub: CFG.hub, kid: run.ctx.kid || null, games: run.ctx.games || [], key: KEY, log: log, warm: warm, frame: frame, abs: abs, ask: ask, setPct: setPct,
       // added by lane/home (ready/README.md): room on the drive, the classes whose videos to save, small helpers
-      space: space, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
+      space: space, fits: fits, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
   }
   function runStep(s) {
     cur = s; s.files = 0; s.failed = 0; s.gone = 0; s.within = 0; s.label = null; s.expected = false;
@@ -518,7 +560,8 @@
     run.running = true; run.started = run.started || Date.now(); saveRun();
     $('phase').textContent = 'Installing the offline worker…';
     var t0 = Date.now();
-    return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
+    // (how much Chrome allows this site is asked now, before anything is being saved: see roomAsk)
+    return roomAsked.then(function () { return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }); }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
       protect().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : p === false ? 'not yet (see "Keep what is saved" on this page: install Jugnu or bookmark this page)' : 'this browser does not say')); }, function () {});
       return waitOnline().then(function () { return fetch('/__cb/manifest', { cache: 'no-store' }); }).then(function (r) { return r.json(); });
@@ -562,7 +605,7 @@
         $('pct').style.width = '100%';
         $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (late.length ? ' Still saving: ' + late.map(function (s) { return s.name; }).join(', ') + '.' : '');
         log('ready in ' + secs + ' s: ' + a.total + ' files checked on the drive, 0 missing');
-        space().then(function (s) { report({ ready: { secs: secs, files: a.total, kept: a.kept, used_mb: Math.round(s.used / 1e6), free_mb: s.free == null ? null : Math.round(s.free / 1e6), persisted: s.safe, device: DEVICE } }); });
+        space().then(function (s) { report({ ready: { secs: secs, files: a.total, kept: a.kept, used_mb: Math.round(s.used / 1e6), room_mb: s.room == null ? null : Math.round(s.room / 1e6), persisted: s.safe, device: DEVICE } }); });
         return seq(late).then(function (badLate) {
           // the late steps are held to the same proof: every file they set out to save is on the drive
           return ask({ type: 'audit' }, 180000).then(function (a2) {
@@ -760,6 +803,7 @@
 
   var saved = ls('cb-links');
   if (saved) { $('links').innerHTML = saved.replace(/href="\/h\/[^"]+"/, 'href="/cb/home"'); $('step2').classList.remove('hidden'); }
+  var roomAsked = roomAsk().then(function () { status(); }); // once, while this page is still idle
   drawVideos(); showChild(); status(); protect();
   // The worker learns this Chromebook's key and id as soon as this page opens (not only at Get ready), so the child
   // home is renewed from the first moment there is a network; and who was just picked on Who's playing? (this page

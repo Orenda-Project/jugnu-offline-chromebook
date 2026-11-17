@@ -86,9 +86,11 @@ const LOCAL = {
   '/__cb/cb-fit.css': ['cb-fit.css', 'text/css; charset=utf-8'], // the battery's screens fitted to a 1366x633 page
   '/__cb/games-read.js': ['games-read.js', 'application/javascript; charset=utf-8'], // a reading with no network: feedback from the scorer on the device
 };
-/** The Get-ready step files in ready/, in name order. */
+/** The Get-ready step files in ready/, in name order. READY_ONLY=videos.js (comma separated) offers only those: a
+ *  rig's quick run of one area's step, never a service's setting. */
+const READY_ONLY = (process.env.READY_ONLY || '').split(',').map((f) => f.trim()).filter(Boolean);
 function readyList() {
-  try { return fs.readdirSync(path.join(HERE, 'ready')).filter((f) => /^[a-z0-9-]+\.js$/.test(f)).sort(); } catch (e) { return []; }
+  try { return fs.readdirSync(path.join(HERE, 'ready')).filter((f) => /^[a-z0-9-]+\.js$/.test(f) && (!READY_ONLY.length || READY_ONLY.includes(f))).sort(); } catch (e) { return []; }
 }
 const BOOT_TAG = '<script src="/__cb/boot.js" defer></script>';
 const TEXT_RX = /^(text\/html|application\/javascript|text\/javascript|application\/json|text\/css|application\/manifest\+json)/i;

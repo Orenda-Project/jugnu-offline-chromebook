@@ -144,13 +144,18 @@
       };
       // 5. room for the whole class? What is still to fetch: each video not on the drive at its real length, about
       //    1.3 MB a lesson for its quiz voices and page (measured: 1.05 MB), and a reserve that is never used.
+      //    The browser itself is asked whether that many bytes fit (ctx.fits): what navigator.storage.estimate()
+      //    calls free is "10 GB" on every Chromebook, whatever its drive holds. Only a browser that cannot be asked is
+      //    judged by the estimate.
       var left = lessons.filter(function (v) { return have.indexOf(v.vid) < 0; });
       var need = sum(left, function (v) { return v.onDrive ? 0 : v.bytes; }) + CLIPS * left.length + RESERVE;
       var sp = await ctx.space();
-      if (left.length && sp.free != null && need > sp.free) {
-        problems.push(label + ' needs ' + mb(need / 1e6) + ', this Chromebook has room for ' + mb(sp.free / 1e6));
+      var fit = left.length && typeof ctx.fits === 'function' ? await ctx.fits(need) : null;
+      var room = sp.room != null ? sp.room : sp.free;
+      if (left.length && (fit === false || (fit == null && sp.free != null && need > sp.free))) {
+        problems.push(label + ' needs ' + mb(need / 1e6) + ', this Chromebook has room for ' + mb(room / 1e6));
         record('no room'); ctx.note('cb-videos', summary);
-        ctx.log('lesson videos, ' + label + ': not saved: it needs ' + mb(need / 1e6) + ' (' + left.length + ' lessons, ' + mb(sum(left, function (v) { return v.bytes; }) / 1e6) + ' of video) and this Chromebook has room for ' + mb(sp.free / 1e6));
+        ctx.log('lesson videos, ' + label + ': not saved: it needs ' + mb(need / 1e6) + ' (' + left.length + ' lessons, ' + mb(sum(left, function (v) { return v.bytes; }) / 1e6) + ' of video) and this Chromebook has room for ' + mb(room / 1e6));
         continue;
       }
       // 6. lesson by lesson (three at a time): its page, its video, its pictures, its quiz clips

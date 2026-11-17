@@ -32,7 +32,10 @@ test('the worker says how big a media file is: on the drive, or on the server wi
 
 /* ---- the videos step, with a list that carries no sizes ---- */
 const lesson = (i) => ({ vid: `0000000${i}-aaaa-4bbb-8ccc-dddddddddddd`, title: `Lesson ${i}`, code: `CODE${i}`, k: `chip${i}`, thumb: `/wq/vt/${i}.webp` }); // no mb, no secs
-function rig({ bytes, free, lessons = [1, 2, 3].map(lesson), withMb = false }) {
+// `room`: what Chrome will really let this site keep (asked for with ctx.fits). `estimate`: what navigator.storage.estimate()
+// says is free, which on Chrome 123+ is "10 GB" on every device whatever the drive holds. `canAsk: false` is a browser
+// that cannot be asked (no private file store): then, and only then, the estimate is all there is.
+function rig({ bytes, room, estimate = 10 * 2 ** 30, canAsk = true, lessons = [1, 2, 3].map(lesson), withMb = false }) {
   const kv = new Map();
   const localStorage = { getItem: (k) => (kv.has(k) ? kv.get(k) : null), setItem: (k, v) => { kv.set(k, String(v)); }, removeItem: (k) => { kv.delete(k); } };
   const saved = new Set();   // media paths "on the drive"
@@ -64,7 +67,8 @@ function rig({ bytes, free, lessons = [1, 2, 3].map(lesson), withMb = false }) {
       if (m.type === 'kept-text') return null;
       return null;
     },
-    space: async () => ({ used: 0, quota: free, free, safe: false }), isFull: () => false, waitOnline: async () => {}, child: () => null,
+    space: async () => ({ used: 0, quota: estimate, free: estimate, room: canAsk ? room : null, safe: false }), isFull: () => false, waitOnline: async () => {}, child: () => null,
+    fits: async (n) => (canAsk ? n <= room : null),
     note: (k, v) => localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v)), videoGrades: () => ['1'],
   };
   const step = window.CB_READY.find((s) => s.name === 'lesson videos');
@@ -72,7 +76,8 @@ function rig({ bytes, free, lessons = [1, 2, 3].map(lesson), withMb = false }) {
 }
 
 test('a class whose list has no sizes is still refused when it does not fit: the need is measured, not 0', async () => {
-  const r = rig({ bytes: 400 * MB, free: 700 * MB }); // 3 lessons x 400 MB = 1.2 GB of video; room for 700 MB
+  // 3 lessons x 400 MB = 1.2 GB of video; Chrome really allows 700 MB more, while its estimate says 10 GB are free
+  const r = rig({ bytes: 400 * MB, room: 700 * MB });
   await assert.rejects(() => r.step.run(r.ctx), (e) => {
     assert.match(e.message, /Class 1 needs 1\.[2-9] GB, this Chromebook has room for 700 MB/);
     return true;
@@ -81,8 +86,16 @@ test('a class whose list has no sizes is still refused when it does not fit: the
   assert.equal(r.json('cb-videos')['1'].why, 'no room');
 });
 
+test('a browser that cannot be asked: the estimate is used, as before', async () => {
+  const r = rig({ bytes: 400 * MB, room: 0, canAsk: false, estimate: 700 * MB });
+  await assert.rejects(() => r.step.run(r.ctx), /Class 1 needs 1\.[2-9] GB, this Chromebook has room for 700 MB/);
+  const fine = rig({ bytes: 400 * MB, room: 0, canAsk: false, estimate: 10 * 2 ** 30 });
+  await fine.step.run(fine.ctx);
+  assert.equal(fine.warmed.filter((u) => /_web\.mp4/.test(u)).length, 3);
+});
+
 test('a class whose list has no sizes is reported by the bytes really kept, never "0 MB"', async () => {
-  const r = rig({ bytes: 400 * MB, free: 10000 * MB });
+  const r = rig({ bytes: 400 * MB, room: 10000 * MB });
   const note = await r.step.run(r.ctx);
   assert.equal(r.warmed.filter((u) => /_web\.mp4/.test(u)).length, 3);
   const line = r.logs.find((l) => /Class 1: 3 of 3 lessons/.test(l));
@@ -96,7 +109,7 @@ test('a class whose list has no sizes is reported by the bytes really kept, neve
 });
 
 test('when the list does carry sizes, the measured bytes still decide (the list rounds, and can be stale)', async () => {
-  const r = rig({ bytes: 9 * MB, free: 10000 * MB, withMb: true }); // the list says 6.1 MB each; the files are 9 MB
+  const r = rig({ bytes: 9 * MB, room: 10000 * MB, withMb: true }); // the list says 6.1 MB each; the files are 9 MB
   await r.step.run(r.ctx);
   assert.equal(r.json('cb-videos')['1'].mb, 27);
 });
