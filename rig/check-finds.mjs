@@ -20,9 +20,16 @@ try {
     const c = await caches.open('cb-pilot-v1');
     const keys = await c.keys();
     const pick = (rx) => keys.find((k) => rx.test(k.url));
-    const video = pick(/_web\.mp4$/), pic = pick(/\/s\/[0-9a-f-]{36}\/p01-[0-9a-f]+\.webp$/), games = pick(/\/api\/wq\/doors\/h\/[^?]+\?.*d=games/);
+    // (lesson videos are in the media cache; one an earlier version saved may still be in the main one)
+    const m = await caches.open('cb-media-v1');
+    const mvideo = (await m.keys()).find((k) => /_web\.mp4$/.test(k.url));
+    if (mvideo) await m.delete(mvideo);
+    // (the Games list the door itself asks for: the home child's own, with no class named. Get ready also keeps the
+    //  lists of the other classes, which the door only asks for when a child taps another class)
+    const video = pick(/_web\.mp4$/), pic = pick(/\/s\/[0-9a-f-]{36}\/p01-[0-9a-f]+\.webp$/), games = pick(/\/api\/wq\/doors\/h\/[^?]+\?kid=[0-9a-f]*&d=games&l=en$/);
     const out = [];
-    for (const k of [video, pic, games]) if (k) { await c.delete(k); out.push(k.url.replace(location.origin, '').split('?')[0].split('/').slice(-2).join('/')); }
+    if (mvideo) out.push(mvideo.url.split('/').slice(-2).join('/'));
+    for (const k of [mvideo ? null : video, pic, games]) if (k) { await c.delete(k); out.push(k.url.replace(location.origin, '').split('?')[0].split('/').slice(-2).join('/') + (k === games ? ' (the Games list)' : '')); }
     return out;
   });
   check('three saved things were removed from the drive', gone.length === 3, gone.join(' | '));
@@ -30,7 +37,8 @@ try {
   console.log('      the check says: ' + r.head.replace(/\s+/g, ' ').slice(0, 110));
   r.lines.forEach((l) => console.log('        · ' + l.replace(/\s+/g, ' ').slice(0, 150)));
   check('the check names the lesson whose video is gone', r.lines.some((l) => /the video (not on this Chromebook|did not open)/.test(l)));
-  check('the check names the storybook whose page is gone', r.lines.some((l) => /^Story: /.test(l) && /missing|did not open/.test(l)));
+  // (the storybooks' own check, ready/stories.js, names the book and the file; without that step the start page's "Story:" line does)
+  check('the check names the storybook whose page is gone', r.lines.some((l) => (/^Story: /.test(l) && /missing|did not open/.test(l)) || /books?,.*not saved; e\.g\. .*p01-/.test(l)), (r.lines.find((l) => /not saved; e\.g\./.test(l)) || '').replace(/\s+/g, ' ').slice(0, 120));
   check('the check names the Games door', r.lines.some((l) => /^Games door/.test(l)));
   check('the files count names what is not on the drive', r.lines.some((l) => /files: .*not on this Chromebook/.test(l) || /not on this Chromebook/.test(l)));
   // Get ready again puts them back

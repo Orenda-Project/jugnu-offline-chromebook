@@ -1,8 +1,12 @@
 // Get ready, end to end, on a Chromebook-shaped Chrome: every step with its real numbers, the lesson videos of the
 // classes named, an interruption half-way (the page is closed and opened again), then "Check this Chromebook".
 //   CB_BASE=http://localhost:8813 DEVICE_KEY=… node rig/ready-check.mjs [--videos 2] [--interrupt] [--keep]
-//                                                                       [--check] [--check-offline] [--skip-ready]
-// --videos: the classes whose lesson videos to save (none | all | 1,2); --keep: use the profile as it is (no fresh start)
+//                                                    [--interrupt-videos] [--check] [--check-offline] [--skip-ready]
+// --videos: the classes whose lesson videos to save (none | all | 1,2 | default = whatever the page ticks by itself:
+//   Classes 1 to 5); with no --videos it is none, so a rig run stays short. --keep: use the profile as it is
+// --interrupt-videos: in the middle of a class's lesson videos, twice: the page is closed and opened again, then
+//   the network is truly cut for 25 s (the server drops every connection). Each time the rig says how many videos
+//   were on the drive before and after, and whether Get ready carried on by itself.
 // --check: then press "Check that everything opens without Wi-Fi"; --check-offline: the same with the network truly
 // off (the server drops every connection and the browser is offline); --skip-ready: only the check (with --keep)
 import fs from 'node:fs';
@@ -30,11 +34,14 @@ const settled = (s) => s && /^(Ready\.|Not ready|Stopped)/.test(s.phase) && !/St
 
 try {
   const t0 = Date.now();
-  await page.goto(`${BASE}/cb?key=${encodeURIComponent(KEY)}&videos=${encodeURIComponent(videos)}${has('skip-ready') ? '&stay=1' : ''}`, { waitUntil: 'load' });
+  await page.goto(`${BASE}/cb?key=${encodeURIComponent(KEY)}${videos === 'default' ? '' : '&videos=' + encodeURIComponent(videos)}${has('skip-ready') ? '&stay=1' : ''}`, { waitUntil: 'load' });
   // (a run that was cut short carries on by itself when the page opens: the button is then already "pressed")
   if (!has('skip-ready') && await page.evaluate(() => !document.getElementById('ready').disabled)) await page.click('#ready');
   else if (!has('skip-ready')) say('      Get ready carried on by itself (the last run was cut short)');
   let interrupted = !has('interrupt');
+  let cuts = has('interrupt-videos') ? 0 : 2; let cutAt = 0;
+  // (lesson videos are in the media cache; ones an earlier version saved may still be in the main one)
+  const onDrive = () => page.evaluate(() => (async () => { let n = 0; for (const name of ['cb-media-v1', 'cb-pilot-v1']) n += (await (await caches.open(name)).keys().catch(() => [])).filter((k) => /_web\.mp4$/.test(new URL(k.url).pathname)).length; return n; })()).catch(() => -1);
   let last = '';
   for (; !has('skip-ready');) {
     await page.waitForTimeout(5000);
@@ -51,8 +58,32 @@ try {
       const back = await snap();
       say(`      after reopening: ${back.phase.slice(0, 90)} | done so far: ${back.steps.filter((x) => x.startsWith('✓')).length} steps | log: ${back.log.slice(-1)[0]}`);
     }
+    // in the middle of a class's lesson videos: closed and opened again, then the network cut for a while
+    const vid = /lesson videos — (Class \S+).*?: (\d+) of (\d+) lessons/.exec(now);
+    if (cuts < 2 && vid && Number(vid[2]) >= cutAt + 6 && Number(vid[2]) < Number(vid[3]) - 6) {
+      cuts += 1; cutAt = Number(vid[2]);
+      const before = await onDrive();
+      if (cuts === 1) {
+        say(`      — the page is closed in the middle of ${vid[1]} (${vid[2]} of ${vid[3]} lessons, ${before} videos on the drive), and opened again —`);
+        await page.goto('about:blank'); await page.waitForTimeout(3000);
+        await page.goto(`${BASE}/cb`, { waitUntil: 'load' });
+        await page.waitForTimeout(6000);
+        const back = await snap();
+        say(`      after reopening: ${await onDrive()} videos on the drive; Get ready ${back && back.steps.some((x) => x.startsWith('…')) ? 'carried on by itself: ' + (back.steps.find((x) => x.startsWith('…')) || '').slice(0, 90) : 'did NOT carry on: ' + (back ? back.phase.slice(0, 90) : '?')}`);
+      } else {
+        say(`      — the network is cut in the middle of ${vid[1]} (${vid[2]} of ${vid[3]} lessons, ${before} videos on the drive): the server drops every connection for 25 s —`);
+        fs.writeFileSync(OFFLINE, '');
+        await page.waitForTimeout(25000);
+        const mid = await snap();
+        say(`      while cut: ${(mid && (mid.steps.find((x) => x.startsWith('…')) || mid.phase) || '?').slice(0, 110)}`);
+        fs.rmSync(OFFLINE, { force: true });
+        await page.waitForTimeout(12000);
+        const back = await snap();
+        say(`      after the network came back: ${await onDrive()} videos on the drive; ${(back && (back.steps.find((x) => x.startsWith('…')) || back.phase) || '?').slice(0, 110)}`);
+      }
+    }
     if (settled(s)) break;
-    if (Date.now() - t0 > 3600e3) { say('gave up after an hour'); break; }
+    if (Date.now() - t0 > 4 * 3600e3) { say('gave up after four hours'); break; }
   }
   const s = await snap();
   say(`\nGet ready: ${Math.round((Date.now() - t0) / 1000)} s — ${s.phase}\nfiles: ${s.kept} · ${s.space}\n${s.steps.join('\n')}\n-- log --\n${s.log.join('\n')}`);

@@ -68,6 +68,12 @@
     <div id="log"></div>
   </div>
 
+  <div class="card" id="keep">
+    <h2>Keep what is saved</h2>
+    <p id="keep-say"></p>
+    <div class="row"><button class="big hidden" id="install" type="button">Install Jugnu on this Chromebook</button> <button class="soft" id="keep-again" type="button">Check again</button></div>
+  </div>
+
   <div class="card" id="check">
     <h2>Check this Chromebook</h2>
     <p>Opens every saved page, story, game and video from this Chromebook alone, as with the Wi-Fi off, and lists anything missing. Wi-Fi can stay on.</p>
@@ -154,18 +160,67 @@
   // A new version of the worker took over (a deploy while Get ready runs): the old one will never answer. Every open
   // question ends now with "no answer", and the batch it was is asked again of the new worker at once.
   if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', function () { asking.slice().forEach(function (done) { done(null); }); });
-  /* Room on this Chromebook: what Jugnu uses, what is left for it, and whether the browser promised not to clear it. */
+  /* HOW MUCH ROOM IS THERE, REALLY?
+   * navigator.storage.estimate() does not say. Since Chrome 123 it answers "what you use + 10 GB" on every device
+   * with a drive of 10 GB or more (so that no site can read the drive's size): it said "room for 10.7 GB more" here
+   * at 48 MB used and at 1.4 GB used alike. And no page can see how full the drive is.
+   * What a page CAN do is ask the browser to set bytes aside in the site's own private file store. Chrome answers
+   * from the site's real allowance (60 % of the drive's whole size, less what the site already keeps) and refuses
+   * past it (it hands room out in blocks of 128 MiB, so the answer is the room rounded down to a block). Nothing is
+   * written: the probe file is cut back to nothing and removed at once.
+   *   fits(bytes)  true | false | null (this browser cannot be asked)      one question, safe at any quiet moment
+   *   roomAsk()    how many more bytes Chrome would let this site keep     many questions: only while nothing is
+   *                being saved (for a moment the site looks as full as its allowance, and a save would be refused)
+   * The whole allowance (room + used at that moment) does not change, so later "room" is that less what is used. */
+  var ROOM_WORKER = 'onmessage = async function (e) { var out = null; try { var root = await navigator.storage.getDirectory();' +
+    ' var fh = await root.getFileHandle("cb-room-probe", { create: true }); var h = await fh.createSyncAccessHandle();' +
+    // (the file is big only for the length of one call: asked, answered, cut back. A page that closes in the middle
+    //  ends this worker where it stands; a file left grown would be room charged to the site that nothing holds)
+    ' var fits = function (n) { var ok = true; try { h.truncate(n); } catch (err) { ok = false; } try { h.truncate(0); } catch (err) {} return ok; };' +
+    ' if (e.data.fits != null) out = fits(e.data.fits);' +
+    ' else { var lo = 0, hi = 1073741824; while (hi < 1125899906842624 && fits(hi)) { lo = hi; hi *= 2; }' +
+    ' for (var i = 0; i < 30 && hi - lo > 16777216; i += 1) { var mid = Math.floor((lo + hi) / 2); if (fits(mid)) lo = mid; else hi = mid; } out = lo; }' +
+    ' try { h.truncate(0); } catch (err) {} h.close(); await root.removeEntry("cb-room-probe"); } catch (err) { out = null; } postMessage(out); };';
+  var probing = Promise.resolve(); // settles when no probe is at work (while one is, its file is counted as "used")
+  function roomProbe(msg) {
+    var asked = new Promise(function (ok) {
+      try {
+        var w = new Worker(URL.createObjectURL(new Blob([ROOM_WORKER], { type: 'text/javascript' })));
+        var t = setTimeout(function () { w.terminate(); ok(null); }, 8000);
+        w.onmessage = function (e) { clearTimeout(t); w.terminate(); ok(e.data); };
+        w.onerror = function () { clearTimeout(t); w.terminate(); ok(null); };
+        w.postMessage(msg);
+      } catch (e) { ok(null); }
+    });
+    var before = probing;
+    probing = asked.then(function () { return before; });
+    return asked;
+  }
+  function fits(bytes) { return roomProbe({ fits: Math.ceil(bytes) }); }
+  var allowance = null; // everything Chrome lets this site keep on this Chromebook, in bytes (null: not asked, or cannot be)
+  function roomAsk() {
+    var st = navigator.storage;
+    if (!st || !st.estimate) return Promise.resolve(null);
+    return roomProbe({}).then(function (more) {
+      if (more == null) return null;
+      return probing.then(function () { return st.estimate(); }).then(function (e) { allowance = more + (e.usage || 0); return more; }, function () { return null; });
+    });
+  }
+  /* Room on this Chromebook: what Jugnu uses, what Chrome would still let it keep (`room`: real; `free`: only what
+   * estimate() says, for a browser that cannot be asked), and whether the browser promised not to clear it. */
   function space() {
     var st = navigator.storage;
-    if (!st || !st.estimate) return Promise.resolve({ used: 0, free: null, safe: null });
-    return st.estimate().then(function (e) {
-      return Promise.resolve(st.persisted ? st.persisted() : null).then(function (p) { return { used: e.usage || 0, quota: e.quota || 0, free: e.quota ? Math.max(0, e.quota - (e.usage || 0)) : null, safe: p }; });
-    }, function () { return { used: 0, free: null, safe: null }; });
+    if (!st || !st.estimate) return Promise.resolve({ used: 0, free: null, room: null, safe: null });
+    // (read when no probe is at work: a start page read "1.1 GB saved" on an empty Chromebook, the probe's own file)
+    return probing.then(function () { return st.estimate(); }).then(function (e) {
+      var used = e.usage || 0;
+      return Promise.resolve(st.persisted ? st.persisted() : null).then(function (p) { return { used: used, quota: e.quota || 0, free: e.quota ? Math.max(0, e.quota - used) : null, room: allowance == null ? null : Math.max(0, allowance - used), safe: p }; });
+    }, function () { return { used: 0, free: null, room: null, safe: null }; });
   }
   function status() {
     var on = navigator.onLine; $('net').textContent = on ? 'online' : 'OFF'; $('net').className = 'state' + (on ? '' : ' off');
     ask({ type: 'stats' }).then(function (s) { if (s) $('kept').textContent = s.kept; });
-    space().then(function (s) { $('space').textContent = mb(s.used) + ' used' + (s.free == null ? '' : ', room for ' + mb(s.free) + ' more') + (s.safe === false ? ' · not yet protected from clean-up' : ''); });
+    space().then(function (s) { $('space').textContent = mb(s.used) + ' used' + (s.room == null ? '' : ', Chrome allows ' + mb(s.room) + ' more here') + (s.safe === false ? ' · not yet protected from clean-up' : s.safe === true ? ' · protected from clean-up' : ''); });
     ask({ type: 'outbox' }).then(function (l) {
       if (!l || !l.length) return;
       $('step3').classList.remove('hidden');
@@ -178,13 +233,66 @@
   setInterval(status, 5000);
   addEventListener('online', status); addEventListener('offline', status);
 
+  /* ---------------- protected from clean-up ----------------
+   * When a Chromebook's drive runs low, Chrome clears the saved files of sites it does not count as important, the
+   * whole site at once. A site that holds "persistent storage" is passed over. Chrome (156) gives it without asking
+   * (chrome/browser/storage/persistent_storage_permission_context.cc) to a site that is
+   *   - installed as an app (an https site; installing from here or by the school's admin both count), or
+   *   - bookmarked (when the profile has 5 bookmarks or fewer), or much used (site engagement 15+, about a day's use),
+   * and never in a Guest or clear-on-exit session. It has to be ASKED for, so it is asked for here when the page
+   * opens, after Get ready, after an install, every minute until it is held, and by boot.js on every Jugnu page:
+   * whichever of those becomes true is picked up without anyone doing anything more. */
+  function protectText(st) {
+    var lot = st.used >= 1e9 ? (st.used / 1e9).toFixed(1) + ' GB' : Math.round((st.used || 0) / 1e6) + ' MB';
+    var saved = st.used >= 1e6 ? 'Jugnu has saved here (' + lot + ')' : 'Jugnu saves here'; // before Get ready there is nothing to count
+    if (st.safe === true) return { ok: true, install: false, say: 'Protected. Chrome will not clear what ' + saved + ' when this Chromebook runs low on room.' };
+    if (st.safe !== false) return { ok: null, install: false, say: 'This browser does not say whether what is saved here is protected from being cleared.' };
+    if (st.installed) return { ok: false, install: false, say: 'Not protected yet, although Jugnu is installed. Chrome protects an installed app only in a signed-in account that keeps its data: not in Guest, and not where site data is cleared at sign-out. What ' + saved + ' could be cleared when the drive runs low.' };
+    return { ok: false, install: !!st.canInstall, say: 'Not protected yet. If this Chromebook runs low on room, Chrome may clear everything ' + saved + '. To protect it, do one of these: ' +
+      (st.canInstall ? 'press Install below' : 'install this page (Chrome menu ⋮ › Cast, save and share › Install page as app)') +
+      '; or bookmark this page (the ☆ in the address bar). It also happens by itself after about a day of use.' };
+  }
+  var installOffer = null; // Chrome's own offer to install this page (it makes it only for a page it finds installable)
+  var protectedSaid = null;
+  function protect() {
+    var st = navigator.storage;
+    var installed = !!(window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches));
+    var show = function (safe) {
+      return space().then(function (sp) {
+        var t = protectText({ safe: safe, installed: installed, canInstall: !!installOffer, used: sp.used });
+        $('keep-say').textContent = t.say; $('keep-say').className = t.ok ? 'state' : t.ok === false ? 'state off' : '';
+        $('install').classList.toggle('hidden', !t.install);
+        if (protectedSaid !== safe) { protectedSaid = safe; report({ protect: { persisted: safe, installed: installed, can_install: !!installOffer, used_mb: Math.round(sp.used / 1e6), device: DEVICE } }); }
+        return safe;
+      });
+    };
+    if (!st || !st.persisted) return show(null);
+    return st.persisted().then(function (p) { return p || !st.persist ? p : st.persist(); }).then(show, function () { return show(null); });
+  }
+  addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); installOffer = e; protect(); });
+  addEventListener('appinstalled', function () { installOffer = null; log('Jugnu was installed on this Chromebook'); protect(); });
+  $('install').onclick = function () {
+    if (!installOffer) return;
+    var offer = installOffer; installOffer = null;
+    offer.prompt();
+    Promise.resolve(offer.userChoice).then(function () { return protect(); }, function () { return protect(); });
+  };
+  $('keep-again').onclick = function () { protect(); };
+  setInterval(function () { if (protectedSaid !== true) protect(); }, 60000);
+
   /* ---------------- the run: steps, their progress, what is remembered ---------------- */
   var RUN_KEY = 'cb-run';          // {v, at, running, done:{stepId:{at, files, note}}, ctx:{kid, games}}
   var RUN_MAX_AGE_MS = 12 * 3600e3; // older than this: Get ready starts from the top (content changes)
   var steps = [];                   // [{id, name, run, late, check, el}]
   var cur = null;                   // the step running now
   var full = false;                 // the drive ran out of room
-  function loadRun() { var r = lsJson(RUN_KEY, null); return r && r.v === 2 && Date.now() - r.at < RUN_MAX_AGE_MS ? r : { v: 2, at: Date.now(), done: {}, ctx: {} }; }
+  function loadRun() {
+    var r = lsJson(RUN_KEY, null);
+    if (r && r.v === 2 && Date.now() - r.at < RUN_MAX_AGE_MS) return r;
+    // An older run starts from the top. If it was cut short (the Chromebook was closed in the middle, say over a
+    // weekend with the lesson videos half-way), that is carried over: this page then carries on by itself.
+    return { v: 2, at: Date.now(), done: {}, ctx: {}, running: !!(r && r.v === 2 && r.running) };
+  }
   var run = loadRun();
   function saveRun() { ls(RUN_KEY, JSON.stringify(run)); }
 
@@ -259,6 +367,13 @@
       return ask({ type: 'expect', step: step ? step.id : 'other', urls: out.gone, drop: true }, 20000).then(function () { return out; });
     });
   }
+  /** Take files off the drive again, and off the list of what the running step means to have there. */
+  function forget(urls) {
+    var step = cur;
+    return ask({ type: 'drop', urls: urls }, 120000).then(function (n) {
+      return ask({ type: 'expect', step: step ? step.id : 'other', urls: urls, drop: true }, 20000).then(function () { return n; });
+    });
+  }
   function frame(src, ms) {
     return new Promise(function (ok) {
       var f = document.createElement('iframe'); f.className = 'warm'; f.src = src;
@@ -267,31 +382,75 @@
       document.body.appendChild(f);
     });
   }
+  // The child home in a hidden frame. A frame that comes back without the home in it (a page that was never
+  // answered leaves it blank: see workerSettled) is taken off the page and the home is opened once more before the
+  // step gives up.
+  function homeFrame(tries) {
+    return frame('/h/' + CFG.hub, 7000).then(function (f) {
+      var d = f.contentDocument;
+      if (d && d.querySelector('a.wq-door')) return f;
+      if (f.remove) f.remove();
+      if (tries > 1) return homeFrame(tries - 1);
+      throw new Error('the child home did not open');
+    });
+  }
+  /* A NEWER WORKER ON ITS WAY IN (18 Nov 2026). Registering the worker is when Chrome looks for a new worker file
+   * (the pilot was deployed since this Chromebook last opened it). The new one installs and takes over a second or
+   * two later. A page that is asked for in the moment of the takeover is lost: Chrome hands it to a fresh copy of
+   * the outgoing worker and ends that copy, unanswered, when the new worker is in charge (a page already being
+   * fetched is waited for; one asked for once the new worker is "activating" is kept for it). The hidden frame of
+   * the "Child home" step was asked for in that moment and stayed blank, 4 runs in 7. So Get ready looks for a new
+   * worker first and waits until it is in charge. With no network to look with, or after `wait` ms, it goes on.
+   * Resolves 'same' | 'new' | 'late'. */
+  function workerSettled(reg, wait) {
+    return new Promise(function (ok) {
+      var done = false;
+      var end = function (v) { if (done) return; done = true; clearTimeout(timer); ok(v); };
+      var timer = setTimeout(function () { end('late'); }, wait);
+      var look = function () {
+        var w = reg.installing || reg.waiting;
+        if (!w) return end('same');
+        var check = function () { if (w.state === 'activated' || w.state === 'redundant') end('new'); };
+        w.addEventListener('statechange', check);
+        check();
+      };
+      Promise.resolve().then(function () { return reg.update(); }).then(look, look);
+    });
+  }
   function abs(u) { return new URL(u, location.origin).href; }
   function text(u) { return fetch(u).then(function (r) { return r.text(); }); }
 
   /* ---------------- lesson videos: which classes ---------------- */
-  // The classes on this Chromebook's class list, else the home child's class. The home child's class and the picked
-  // child's class are ticked to begin with; a teacher ticks the others (each line says how big it is once known).
+  // Which classes' lesson videos this Chromebook keeps. Operator, 18 Nov 2026: Classes 1 to 5 on every Chromebook
+  // (about 4.6 GB, saved after everything else), until a teacher unticks one. videoGrades() is the teacher's own
+  // choice, or null when none was made (the lesson-videos step then takes Classes 1 to 5 of what Jugnu lists).
+  function videoDefault(all) {
+    return (all || []).map(String).filter(function (g) { return /^[1-5]$/.test(g); });
+  }
   function videoGrades() {
     var v = ls('cb-video-grades');
     if (v === 'none') return [];
-    var all = lsJson('cb-video-all', []);
-    if (v === 'all') return all.slice();
+    if (v === 'all') return lsJson('cb-video-all', []).map(String);
     if (v) return v.split(',').map(function (g) { return g.trim(); }).filter(Boolean);
-    var own = []; var hg = ls('cb-home-grade'); var c = child();
-    if (hg) own.push(String(hg));
-    if (c && c.grade && own.indexOf(String(c.grade)) < 0) own.push(String(c.grade));
-    return own;
+    return null;
+  }
+  /** What stands beside a class's tick: its lessons, its size only when it is known (a size that was never measured
+   *  is left out, an estimate is called one), and what is saved of it by the bytes really kept. */
+  function videoLine(s, d) {
+    if (!s) return '';
+    var out = s.n + ' lessons' + (s.mb > 0 ? ', ' + (s.measured ? '' : 'about ') + mb(s.mb * 1e6) : '');
+    if (d && d.saved) out += ' · ' + d.saved + ' saved' + (d.mb > 0 ? ' (' + mb(d.mb * 1e6) + ')' : '');
+    if (d && d.why === 'no room') out += ' · no room for the rest';
+    return out;
   }
   function drawVideos() {
     var all = lsJson('cb-video-all', []); var sizes = lsJson('cb-video-sizes', {}); var saved = lsJson('cb-videos', {});
     if (!all.length) { $('vids').innerHTML = ''; return; }
-    var on = videoGrades();
-    $('vids').innerHTML = '<b>Lesson videos to save</b> <small>(large; tick the classes that use this Chromebook)</small><br>' + all.map(function (g) {
+    var on = videoGrades() || videoDefault(all);
+    $('vids').innerHTML = '<b>Lesson videos to save</b> <small>(saved last, after everything else; untick a class this Chromebook does not need)</small><br>' + all.map(function (g) {
       var s = sizes[g]; var d = saved[g];
       return '<label><input type="checkbox" data-vg="' + esc(g) + '"' + (on.indexOf(String(g)) >= 0 ? ' checked' : '') + '> Class ' + esc(g) +
-        ' <small>' + (s ? s.n + ' lessons, ' + mb(s.mb * 1e6) : '') + (d && d.saved ? ' · ' + d.saved + ' saved' : '') + '</small></label>';
+        ' <small>' + esc(videoLine(s, d)) + '</small></label>';
     }).join('');
     [].forEach.call($('vids').querySelectorAll('[data-vg]'), function (b) {
       b.onchange = function () {
@@ -329,7 +488,7 @@
     } },
     { id: 'doors', name: 'Child home: Stories, Games, Videos', run: function () {
       setPct(10, 'opening the child home…');
-      return frame('/h/' + CFG.hub, 7000).then(function (f) {
+      return homeFrame(2).then(function (f) {
         // What a child does: open the Games door (its list carries the game links and the child's id), then the others.
         // games lane (18 Nov): the frame's page is read each time it is used, never held. A home that opens again by
         // itself after it was first read (a newer worker takes over, a link is renewed) left this step holding the
@@ -424,7 +583,7 @@
   function context() {
     return { cfg: CFG, hub: CFG.hub, kid: run.ctx.kid || null, games: run.ctx.games || [], key: KEY, log: log, warm: warm, frame: frame, abs: abs, ask: ask, setPct: setPct,
       // added by lane/home (ready/README.md): room on the drive, the classes whose videos to save, small helpers
-      space: space, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
+      space: space, fits: fits, forget: forget, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
   }
   function runStep(s) {
     cur = s; s.files = 0; s.failed = 0; s.gone = 0; s.within = 0; s.label = null; s.expected = false;
@@ -464,26 +623,14 @@
     run.running = true; run.started = run.started || Date.now(); saveRun();
     $('phase').textContent = 'Installing the offline worker…';
     var t0 = Date.now();
-    return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function (reg) {
-      // games lane (18 Nov): a newer worker (a new pilot release) takes over BEFORE the steps start. Seen on the rig:
-      // it waited behind the older worker while Get ready kept that one busy, then took over in the middle and cut
-      // what the older one was answering (the child home's frame failed; nothing behind the Games door was saved).
-      // So: ask now whether there is a newer one, and if so wait for it to be in charge (half a minute at most).
-      if (!reg || !navigator.serviceWorker.controller || typeof reg.update !== 'function' || !navigator.onLine) return reg;
-      return reg.update().then(null, function () {}).then(function () {
-        var next = reg.installing || reg.waiting;
-        if (!next) return reg;
-        $('phase').textContent = 'A newer offline worker is taking over…';
-        return new Promise(function (ok) {
-          var done = false; var go = function () { if (done) return; done = true; setTimeout(function () { ok(reg); }, 600); };
-          next.addEventListener('statechange', function () { if (next.state === 'activated' || next.state === 'redundant') go(); });
-          if (next.state === 'activated') go();
-          setTimeout(go, 30000);
-        }).then(function (r) { log('a newer offline worker took over before the steps'); return r; });
-      });
-    }).then(function () {
+    // (the games lane's takeover wait, 18 Nov, is the same idea as workerSettled below: kept once, here)
+    // (how much Chrome allows this site is asked now, before anything is being saved: see roomAsk)
+    return roomAsked.then(function () { return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }); }).then(function (reg) {
+      var had = !!reg.active; // (the very first install has no older worker to take over from: nothing to say)
+      return workerSettled(reg, 30000).then(function (how) { if (had && how !== 'same') log(how === 'new' ? 'a newer version of the offline worker was waiting: it is in charge now' : 'a newer version of the offline worker is still coming in; carrying on'); });
+    }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
-      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : 'not yet (the browser grants it to a site that is used or installed)')); }, function () {});
+      protect().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : p === false ? 'not yet (see "Keep what is saved" on this page: install Jugnu or bookmark this page)' : 'this browser does not say')); }, function () {});
       return waitOnline().then(function () { return fetch('/__cb/manifest', { cache: 'no-store' }); }).then(function (r) { return r.json(); });
     }).then(function (m) {
       // The school's class lists, kept for offline (only with this Chromebook's key).
@@ -508,7 +655,7 @@
       return seq(steps.filter(function (s) { return !s.late; }));
     }).then(function (bad) {
       // Ready only when the worker confirms every file each step set out to save is on this Chromebook.
-      return ask({ type: 'audit' }, 120000).then(function (a) {
+      return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 120000).then(function (a) {
         var late = steps.filter(function (s) { return s.late; });
         var lateIds = late.map(function (s) { return s.id; });
         var miss = a ? a.steps.filter(function (s) { return s.missing && lateIds.indexOf(s.step) < 0; }) : [];
@@ -525,10 +672,10 @@
         $('pct').style.width = '100%';
         $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (late.length ? ' Still saving: ' + late.map(function (s) { return s.name; }).join(', ') + '.' : '');
         log('ready in ' + secs + ' s: ' + a.total + ' files checked on the drive, 0 missing');
-        space().then(function (s) { report({ ready: { secs: secs, files: a.total, kept: a.kept, used_mb: Math.round(s.used / 1e6), free_mb: s.free == null ? null : Math.round(s.free / 1e6), persisted: s.safe, device: DEVICE } }); });
+        space().then(function (s) { report({ ready: { secs: secs, files: a.total, kept: a.kept, used_mb: Math.round(s.used / 1e6), room_mb: s.room == null ? null : Math.round(s.room / 1e6), persisted: s.safe, device: DEVICE } }); });
         return seq(late).then(function (badLate) {
           // the late steps are held to the same proof: every file they set out to save is on the drive
-          return ask({ type: 'audit' }, 180000).then(function (a2) {
+          return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 180000).then(function (a2) {
             late.forEach(function (s) {
               var m = a2 && a2.steps.filter(function (x) { return x.step === s.id && x.missing; })[0];
               if (!m || badLate.indexOf(s) >= 0) return;
@@ -542,7 +689,8 @@
       });
     }).then(function (badLate) {
       run.running = false; run.complete = !badLate.length; run.finished = Date.now(); saveRun();
-      $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (badLate.length ? ' Not finished: ' + badLate.map(function (s) { return s.name; }).join(', ') + ' (press Get ready again to carry on).' : '');
+      protect(); // asked again now that there is something to protect
+      $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (protectedSaid === false ? ' It is not yet protected from clean-up: see "Keep what is saved" below.' : '') + (badLate.length ? ' Not finished: ' + badLate.map(function (s) { return s.name; }).join(', ') + ' (press Get ready again to carry on).' : '');
       $('ready').disabled = false; $('ready').textContent = badLate.length ? 'Carry on' : 'Get ready again (checks for new things)';
       $('again').classList.remove('hidden');
       status();
@@ -670,7 +818,7 @@
       ls('cb-ready-files', JSON.stringify(m.ready || []));
       return Promise.all((m.ready || []).map(function (f) { return new Promise(function (ok) { if (document.querySelector('script[data-ready="' + f + '"]')) return ok(); var s = document.createElement('script'); s.src = '/__cb/ready/' + f; s.setAttribute('data-ready', f); s.onload = s.onerror = ok; document.head.appendChild(s); }); }));
     });
-    return load.then(function () { return ask({ type: 'audit' }, 180000); }).then(function (a) {
+    return load.then(function () { return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 180000); }).then(function (a) {
       if (!a) { all.push({ group: 'Files', name: 'offline worker', ok: false, why: 'not installed: press Get ready first' }); return null; }
       a.steps.forEach(function (s) { all.push({ group: 'Files', name: s.step.replace(/^x-/, '') + ': ' + s.total + ' files', ok: !s.missing, why: s.missing ? s.missing + ' not on this Chromebook, e.g. ' + short(s.sample[0]) : '' }); });
       return builtInChecks(tester).then(function (rows) { all = all.concat(rows); });
@@ -722,11 +870,12 @@
 
   var saved = ls('cb-links');
   if (saved) { $('links').innerHTML = saved.replace(/href="\/h\/[^"]+"/, 'href="/cb/home"'); $('step2').classList.remove('hidden'); }
-  drawVideos(); showChild(); status();
+  var roomAsked = roomAsk().then(function () { status(); }); // once, while this page is still idle
+  drawVideos(); showChild(); status(); protect();
   // The worker learns this Chromebook's key and id as soon as this page opens (not only at Get ready), so the child
   // home is renewed from the first moment there is a network; and who was just picked on Who's playing? (this page
   // is where a pick lands), so the very next Home is that child's.
-  if (KEY) ask({ type: 'home', key: KEY, device: DEVICE, who: (child() && child().student_id) || null }, 8000).then(function (h) { if (h && h.hub) ls('cb-hub', h.hub); });
+  if (KEY) ask({ type: 'home', key: KEY, device: DEVICE, who: (child() && child().student_id) || null, name: (child() && child().name) || '' }, 8000).then(function (h) { if (h && h.hub) ls('cb-hub', h.hub); });
   if (run.complete) { $('phase').textContent = 'Ready. Everything below works on this Chromebook without Wi-Fi.'; $('ready').textContent = 'Get ready again (checks for new things)'; $('pct').style.width = '100%'; $('again').classList.remove('hidden'); }
   else if (Object.keys(run.done).length) { $('phase').textContent = 'Get ready was stopped part-way. Press the button: it carries on from where it was.'; $('ready').textContent = 'Carry on'; $('again').classList.remove('hidden'); }
   // The page was reloaded to put the worker in charge, or the Chromebook was closed while Get ready was running: carry on.

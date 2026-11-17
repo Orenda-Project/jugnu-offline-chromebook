@@ -39,15 +39,54 @@ That contract is unchanged. What follows was added with the reliable Get ready (
 
 ## More in `ctx`
 
-`space()` → `{used, free, quota, safe}` in bytes (`safe`: the browser promised not to clear it); `isFull()` (the drive
-ran out: stop); `waitOnline()` (resolves when the server answers again); `child()` (the child picked on Who's
-playing?, or null); `note(key, value)` (kept on the device for the start page); `videoGrades()`.
+`space()` → `{used, free, quota, room, safe}` in bytes (`safe`: the browser promised not to clear it); `isFull()` (the
+drive ran out: stop); `waitOnline()` (resolves when the server answers again); `child()` (the child picked on Who's
+playing?, or null); `note(key, value)` (kept on the device for the start page); `videoGrades()` (the classes a
+teacher ticked for lesson videos: `null` when nobody has chosen, `[]` for none).
+
+**Room.** `fits(bytes)` → `true | false | null`: will the browser really let this site keep that much more? Ask it
+before a large download. Do **not** work it out from `space().free`: since Chrome 123 `navigator.storage.estimate()`
+reports "what is used plus 10 GB" on every device, however full the drive is, so `free` never says no. `fits` asks
+the browser itself (it reserves that much in the site's private files and gives it straight back); `null` means this
+browser cannot be asked, and then `free` is all there is. `space().room` is the same answer as a number (in steps of
+128 MB, as Chrome hands room out), or `null`.
+
+`forget(urls)` takes files off the drive again (a video by its address with or without its signature, a page of this
+site by its own address) and off the list of what your step meant to save. Use it when a download that must be whole
+could not be finished (the lesson videos keep a class whole or not at all).
+
+**Reading without keeping.** The worker keeps every page and list it fetches. To read one only to look inside it
+(the lesson videos read 100 lesson pages to measure a class that may not fit), ask with the header
+`X-CB-Keep: no`: `fetch(url, { headers: { 'X-CB-Keep': 'no' } })`. It is answered as usual and not written to the
+drive; an older saved copy, if there is one, stays.
 
 `setPct(pct, text)`: `pct` is your step's own progress 0–100 (pass `null` to change only the text).
 
+`ask({ type: 'size', urls })` → `[{ bytes, kept }]`: how big each media file really is. `kept: true` is its length on
+the drive; otherwise its length on the server, read with a one-byte request through this site (nothing is
+downloaded); `bytes: null` when neither could be read. Use it before a large download to see whether it fits, and
+after it to report what was kept. Do not plan room from a size in one of Jugnu's lists: those are there only for
+files Jugnu looked at lately (a whole class of lesson videos came with none).
+
+## Two caches, and never list one
+
+Media fetched from the media store through this site (`warm(urls, { readable: true })`: lesson videos, quiz clips,
+pictures) is kept in a cache of its own, `cb-media-v1`. Everything else is in `cb-pilot-v1`. To know whether a file
+is on the drive, ask the worker (`ask({ type: 'have', urls })`, `ask({ type: 'size', urls })`): it looks in both, by
+the file's address without its signature.
+
+**Do not list a whole cache** (`cache.keys()` with no request). Chrome refuses once the list passes about 10 MB
+("Operation too large"): 14,062 files fitted, 15,979 did not, and from then on every listing fails. With all five
+classes of lesson videos saved that is where the one cache was (18 Nov 2026). Look a file up by its address
+(`cache.match`, or `cache.keys(request)`), and keep the names you will need to find again in one small file of
+your own, as the audit now does. (Still listing the main cache today: `sw-stories.js` "stories-missing",
+`pilot-sw.js` `gChServeOf` and the file count, `games-read.js`. They work while the main cache stays under the
+limit, which the media cache is there to ensure.)
+
 ## A step can also say
 
-- `late: true` — runs after the start page has said "Ready" (a long, optional download, like the lesson videos).
+- `late: true` — runs after everything else, once the start page has said "Ready" (a long download that the rest
+  must not wait for: the lesson videos of Classes 1 to 5, about 4.6 GB).
 - `resumes: true` — your step keeps its own record of what it saved and skips it next time (the lesson videos do, per
   lesson). Without it, the list of "what this step meant to save" starts afresh each time the step runs, so pass
   `warm` everything every time (what is already on the drive costs one lookup, not a download).

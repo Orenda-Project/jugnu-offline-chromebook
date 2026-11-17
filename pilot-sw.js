@@ -69,10 +69,34 @@ function miss(req, why) {
 function offlineAnswer(req) {
   miss(req, 'not_kept');
   var html = req.mode === 'navigate';
-  return new Response(html ? '<h1>Offline</h1><p>This page was not saved on this device.</p>' : 'offline', {
+  return new Response(html ? NEEDS_NET_PAGE : 'offline', {
     status: 503, headers: { 'Content-Type': html ? 'text/html; charset=utf-8' : 'text/plain', 'X-CB-Offline': '1' },
   });
 }
+/* NEEDS THE INTERNET (lane/home; operator, 18 Nov 2026: "if there is internet and content is not downloaded it should
+ * still play"). With a network, anything not saved comes from the network: pages and lists network-first, a lesson
+ * video straight from its signed link with the player's own byte ranges (media()). With none, a page that is not on
+ * the drive is this one: plain words a child can read, in English and Urdu, Jugnu asleep (when that picture is
+ * saved), a way Home and a Try again; it opens the real page by itself when the network is back. Still a 503 marked
+ * X-CB-Offline, and still carrying "not saved on this device", for the self-test and the rigs. */
+var NEEDS_NET_PAGE = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Jugnu</title>' +
+  '<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf3df;color:#1f2937;font:20px/1.5 system-ui,sans-serif}' +
+  'main{max-width:600px;padding:20px 24px;text-align:center}img{width:120px;height:120px}h1{font-size:30px;margin:6px 0 4px}p{margin:6px 0}' +
+  '.ur{direction:rtl;font-size:23px;line-height:1.9;margin-top:12px}.ur b{font-size:27px}' +
+  '.row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:18px}' +
+  'a,button{font:700 20px system-ui,sans-serif;padding:13px 26px;border-radius:999px;border:0;cursor:pointer;text-decoration:none}' +
+  'a{background:#e87b2a;color:#fff;box-shadow:0 4px 0 #b85c17}button{background:#fff;color:#1f2937;border:2px solid #e7dfc9}' +
+  'small{display:block;margin-top:18px;color:#9ca3af;font-size:13px}</style></head><body><main data-cb-needs-net>' +
+  '<img src="/wq/jugnu/sleep.webp" alt="" onerror="this.remove()">' +
+  '<h1>This needs the internet</h1>' +
+  '<p>It is not saved on this Chromebook yet. Ask your teacher to turn on the Wi-Fi, or go Home and play something that is saved.</p>' +
+  '<div class="ur" lang="ur"><b>اس کے لیے انٹرنیٹ چاہیے</b><br>یہ ابھی اس کروم بک پر محفوظ نہیں ہے۔ اپنے ٹیچر سے وائی فائی چلانے کو کہیں، یا ہوم پر جا کر کوئی محفوظ چیز کھیلیں۔</div>' +
+  '<div class="row"><a href="/cb/home">⌂ Home · ہوم</a><button type="button" onclick="location.reload()">Try again · دوبارہ</button></div>' +
+  '<small>This page was not saved on this device.</small></main>' +
+  '<script>addEventListener("online",function(){location.reload()})</script></body></html>';
+// Is the network there? From what the last page or list request met (a browser's own "online" only knows about the
+// Wi-Fi, not about the internet behind it). boot.js asks before it tells a child "this needs the internet".
+var netLast = null; // 'up' | 'down': what the last request met (an order, not a clock: two can fall in one millisecond)
 
 function networkFirst(req, key) {
   return new Promise(function (resolve) {
@@ -85,14 +109,18 @@ function networkFirst(req, key) {
       kept(key).then(function (hit) { if (hit && !done) { done = true; resolve(hit); } });
     }, NETWORK_WAIT_MS);
     fetch(req).then(function (res) {
+      netLast = res.status >= 500 ? 'down' : 'up'; // NEEDS THE INTERNET (lane/home)
       // A server error (a dropped upstream answered by the tunnel or a school proxy as 502/503/504) counts as no
       // network when a kept copy exists: the child gets the copy, not an error page.
       if (res.status >= 500) {
         return kept(key).then(function (hit) { if (!done) { done = true; clearTimeout(timer); resolve(hit || res); } });
       }
-      keep(key, res);
+      // VIDEOS (lane/home): a page read only to find what it names (X-CB-Keep: no) is not kept; a lesson's page is kept
+      // with its video, so no saved page stands without one.
+      if (req.headers.get('X-CB-Keep') !== 'no') keep(key, res);
       if (!done) { done = true; clearTimeout(timer); resolve(res); }
     }, function () {
+      netLast = 'down'; // NEEDS THE INTERNET (lane/home)
       if (done) return;
       done = true; clearTimeout(timer);
       kept(key).then(function (hit) { resolve(hit || offlineAnswer(req)); });
@@ -185,10 +213,14 @@ function lsidOf(st) { return typeof st === 'string' && st.indexOf(LOCAL) === 0 ?
 
 function localSession(body) {
   var lsid = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(8)), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
-  var name = (body.new && body.new.name) || '';
-  return putRec({ lsid: lsid, session: body, answers: {}, finish: false, createdAt: Date.now() }).then(function () {
-    return json({ st: LOCAL + lsid, device_ref: body.device_ref, counted: true, resume: { answered: [] },
-      child: { chip: 'l' + lsid.slice(0, 15), first: name.split(/\s+/)[0] || name, animal: 'owl' }, local: true });
+  // (lane/home) A quiz opened from the home (a lesson's quiz) names its child by a chip, not a typed name: with no
+  // network the page then greeted nobody ("Welcome back, !"). The child picked on Who's playing? is who is there.
+  return homeState().then(function (st) {
+    var name = (body.new && body.new.name) || st.name || '';
+    return putRec({ lsid: lsid, session: body, answers: {}, finish: false, createdAt: Date.now() }).then(function () {
+      return json({ st: LOCAL + lsid, device_ref: body.device_ref, counted: true, resume: { answered: [] },
+        child: { chip: 'l' + lsid.slice(0, 15), first: name.split(/\s+/)[0] || name, animal: 'owl' }, local: true });
+    });
   });
 }
 
@@ -370,6 +402,7 @@ function homeGet(req, u) {
 /** A POST that names a home link, in its address or its body. */
 function homePost(req) {
   // READY (self-test): nothing is sent and nothing is queued; a saved answer is given, else a plain "offline"
+  if (savedOnly() && new URL(req.url).pathname === WATCH_PATH) return watchStart(req); // VIDEOS: the saved lesson
   if (savedOnly()) return bodyKey(req).then(kept).then(function (hit) { return hit || json({ ok: false, offline: true, selftest: true }, 503); });
   return req.clone().text().then(function (body) {
     var tokens = homeTokens(new URL(req.url).pathname + ' ' + body);
@@ -480,6 +513,7 @@ function homeAsk(d, port) {
     if (typeof d.key === 'string' && d.key) st.key = d.key;
     if (typeof d.device === 'string' && d.device) st.device = d.device;
     if (d.lang === 'en' || d.lang === 'ur') st.lang = d.lang;
+    if (d.name !== undefined) st.name = typeof d.name === 'string' ? d.name.slice(0, 40) : ''; // the picked child's name, kept on this device only
     if (d.who !== undefined) {
       var id = typeof d.who === 'string' && /^[0-9a-f-]{36}$/i.test(d.who) ? d.who : null;
       if (!id) st.who = null; else if (!st.who || st.who.id !== id) st.who = { id: id };
@@ -521,12 +555,41 @@ var VIDEO_STALL_MS = 45000; // no bytes for this long: given up, tried again by 
 function videoStore(url) { try { var u = new URL(url); return u.origin !== self.location.origin && VIDEO_STORE_RX.test(u.hostname) && READABLE_RX.test(u.pathname); } catch (e) { return false; } }
 function videoIs(url) { try { var u = new URL(url); return u.origin !== self.location.origin && VIDEO_RX.test(u.pathname); } catch (e) { return false; } }
 function videoKeyOf(url) { var u = new URL(url); return u.origin + u.pathname; }
+/* THE MEDIA STORE'S FILES IN A CACHE OF THEIR OWN (18 Nov 2026). With four classes of lesson videos on the drive the
+ * one cache held 15,979 files, and Chrome would no longer list it ("Failed to execute 'keys' on 'Cache': Operation
+ * too large": a cache's list may not pass about 10 MB; 14,062 files had just fitted). Every lane lists that cache
+ * (the audit, the storybooks' own check, a game's scoring with no network), so Get ready could never say "Ready"
+ * again. Lesson videos and their quiz clips are most of the files, by the thousand, and nothing needs them listed:
+ * what is fetched through this site from the media store is kept in MEDIA_KEEP, under its address without the
+ * signature. A file an earlier version put in the main cache is still found there, and is moved over when Get ready
+ * next looks at it (never while a child is playing it). */
+var MEDIA_KEEP = 'cb-media-v1';
+/** The kept copy of a media-store file, wherever it is (undefined when it is not on the drive). */
+function mediaFind(key) {
+  return caches.open(MEDIA_KEEP).then(function (m) { return m.match(key); }).then(function (hit) {
+    return hit || caches.open(KEEP).then(function (c) { return c.match(key); });
+  });
+}
+/** The same for Get ready: a readable copy found in the main cache is moved to the media cache first. */
+function mediaAdopt(key) {
+  return caches.open(MEDIA_KEEP).then(function (m) {
+    return m.match(key).then(function (hit) {
+      if (hit) return hit;
+      return caches.open(KEEP).then(function (c) {
+        return c.match(key).then(function (old) {
+          if (!old || old.type === 'opaque') return old;
+          return m.put(key, old.clone()).then(function () { return c.delete(key); }).then(function () { keptN = null; return m.match(key); }, function () { return old; });
+        });
+      });
+    });
+  });
+}
 /** The kept copy for a media request: the readable one saved through this site first; an unreadable video copy is not used. */
 function videoKept(url, key) {
   var u;
   try { u = new URL(url); } catch (e) { return kept(key); }
   if (u.origin === self.location.origin) return kept(key);
-  return caches.open(KEEP).then(function (c) { return c.match(videoKeyOf(url)); }).then(function (own) {
+  return mediaFind(videoKeyOf(url)).then(function (own) {
     if (own) return own;
     return kept(key).then(function (hit) { return hit && hit.type === 'opaque' && VIDEO_RX.test(u.pathname) ? undefined : hit; });
   });
@@ -535,8 +598,8 @@ function videoKept(url, key) {
 function videoSave(url, fresh) {
   var key = videoKeyOf(url);
   return caches.open(KEEP).then(function (c) {
-    return (fresh ? Promise.resolve(null) : c.match(key)).then(function (hit) {
-      if (hit) return { ok: true, had: true };
+    return (fresh ? Promise.resolve(null) : mediaAdopt(key)).then(function (hit) {
+      if (hit && hit.type !== 'opaque') return { ok: true, had: true };
       return homeState().then(function (st) {
         var ctl = typeof AbortController === 'function' ? new AbortController() : null;
         var stall = null;
@@ -559,15 +622,105 @@ function videoSave(url, fresh) {
             clearTimeout(stall);
             if (!got || (want && got !== want)) return { ok: false, why: 'short' };
             var whole = new Response(new Blob(chunks, { type: type }), { status: 200, headers: { 'Content-Type': type, 'Content-Length': String(got) } });
-            return c.put(key, whole).then(function () {
-              // unreadable copies of the same file (saved before, one per signature) are dropped: each is charged ~7 MB
-              return c.keys(key, { ignoreSearch: true }).then(function (same) { return Promise.all(same.filter(function (r) { return r.url !== key; }).map(function (r) { return c.delete(r); })); });
+            return caches.open(MEDIA_KEEP).then(function (m) { return m.put(key, whole); }).then(function () {
+              // copies of the same file in the main cache are dropped: an earlier readable one, and unreadable ones
+              // (saved before, one per signature), each charged ~7 MB
+              return c.keys(key, { ignoreSearch: true }).then(function (same) {
+                return Promise.all(same.filter(function (r) { try { return videoKeyOf(r.url) === key; } catch (err) { return false; } }).map(function (r) { return c.delete(r); }));
+              }, function () { return null; });
             }).then(function () { return { ok: true, bytes: got }; });
           });
         }).catch(function (e) { clearTimeout(stall); return { ok: false, why: e && e.name === 'QuotaExceededError' ? 'no_room' : 'failed' }; });
       });
     });
   }).catch(function (e) { return { ok: false, why: e && e.name === 'QuotaExceededError' ? 'no_room' : 'failed' }; });
+}
+/** How big a media file is: its real length on the drive when it is kept, else its length on the server, asked for
+ * with a one-byte range through this site (the total rides in Content-Range; nothing is downloaded). {bytes, kept};
+ * bytes null when neither could be read. Jugnu's lists carry a size only for lessons it looked at lately, so the
+ * videos step measures here before it decides whether a class fits, and reports what was really kept. */
+/* A LESSON AS A VIDEO ALONE ("watch"), and a lesson whose page the list no longer names (lane/home, 18 Nov 2026).
+ * The Videos door opens a lesson two ways. A child with a class code: the list names the lesson's page
+ * (/q/<code>?k=…), or POST /api/wq/videos/start answers {code, k}. A child with none: the start answers
+ * {watch: {vid, url, poster, …}} and the door plays the video in the home itself. Which way it goes is Jugnu's choice
+ * at that moment (it looks at the child's 18 newest quiz codes), so it changes under a saved class.
+ * Get ready leaves a record per saved lesson (/__cb/watch/<vid>: where its video is, its picture, its name). With no
+ * network:
+ *   - a start gets Jugnu's own earlier answer when that leads to a page on the drive; otherwise the record, as
+ *     {watch}: the saved video plays. A lesson with no record is told there is no network. The quiz after a video
+ *     alone ({after: 1}) is made by the server, so it is not offered from the drive.
+ *   - a saved list names only the lesson pages that are on the drive; the others are started, as above.
+ * With a network nothing here is touched: the server answers. */
+var WATCH_PATH = '/api/wq/videos/start';
+var LIB_RX = /^\/api\/wq\/lib\/h\//;
+function watchKey(vid) { return new URL('/__cb/watch/' + encodeURIComponent(vid), self.location.origin).toString(); }
+function lessonPageKey(code, k) { return homeKey(self.location.origin + '/q/' + encodeURIComponent(code) + '?k=' + encodeURIComponent(k || '') + '&via=videos'); }
+function watchKeep(recs) {
+  return caches.open(KEEP).then(function (c) {
+    return Promise.all(recs.filter(function (r) { return r && typeof r.vid === 'string' && typeof r.url === 'string'; }).map(function (r) {
+      return c.put(watchKey(r.vid), new Response(JSON.stringify(r), { headers: { 'Content-Type': 'application/json' } })).then(function () { return 1; });
+    }));
+  }).then(function (done) { keptN = null; return done.length; });
+}
+function watchNoNet(req, body, res) {
+  return bodyKey(req).then(kept).then(function (hit) {
+    return (hit ? hit.clone().json().catch(function () { return null; }) : Promise.resolve(null)).then(function (j) {
+      return (j && j.code ? kept(lessonPageKey(j.code, j.k)) : Promise.resolve(null)).then(function (page) {
+        if (hit && page) return hit; // the lesson with its quiz
+        var rec = body && typeof body.vid === 'string' && !body.after ? kept(watchKey(body.vid)) : Promise.resolve(null);
+        return rec.then(function (r) { return r ? r.json() : null; }).then(function (w) {
+          if (w) return new Response(JSON.stringify({ watch: w }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-CB-Local': '1' } });
+          if (hit && !(j && j.code)) return hit; // Jugnu's own earlier {watch}
+          miss(req, 'post_offline');
+          return res || json({ ok: false, offline: true }, 503);
+        });
+      });
+    });
+  }).catch(function () { return res || json({ ok: false, offline: true }, 503); });
+}
+function watchStart(req) {
+  return req.clone().text().then(function (t) {
+    var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) {}
+    if (savedOnly()) return watchNoNet(req, body, json({ ok: false, offline: true, selftest: true }, 503));
+    return fetch(req.clone()).then(function (res) {
+      if (res.status >= 500) return watchNoNet(req, body, res);
+      if (res.ok && /json/.test(res.headers.get('Content-Type') || '')) { var copy = res.clone(); bodyKey(req).then(function (key) { keep(key, copy); }); }
+      return res;
+    }, function () { return watchNoNet(req, body, null); });
+  });
+}
+/** A saved list of lessons, given out with no network: it names only the lesson pages that are on the drive. */
+function videoListFit(res) {
+  var noNet = (self.navigator && self.navigator.onLine === false) || netLast === 'down' || savedOnly();
+  if (!res || !res.ok || !noNet) return Promise.resolve(res);
+  return res.clone().json().then(function (j) {
+    var rows = [];
+    ((j && j.chapters) || []).forEach(function (c) { (c.videos || []).forEach(function (v) { if (v && v.code) rows.push(v); }); });
+    if (!rows.length) return res;
+    return Promise.all(rows.map(function (v) { return kept(lessonPageKey(v.code, v.k)).then(function (hit) { if (!hit) { delete v.code; delete v.k; } }); }))
+      .then(function () { return new Response(JSON.stringify(j), { status: 200, headers: { 'Content-Type': 'application/json' } }); });
+  }).catch(function () { return res; });
+}
+
+function videoSize(url) {
+  var key;
+  try { key = videoKeyOf(url); } catch (e) { return Promise.resolve({ bytes: null, kept: false }); }
+  var none = { bytes: null, kept: false };
+  return mediaAdopt(key).then(function (hit) {
+    if (hit && hit.type !== 'opaque') return hit.blob().then(function (b) { return { bytes: b.size, kept: true }; });
+    if (savedOnly()) return none;
+    return homeState().then(function (st) {
+      return fetch('/__cb/media?u=' + encodeURIComponent(url), { headers: { 'X-CB-Key': st.key || '', Range: 'bytes=0-0' } }).then(function (res) {
+        var total = null;
+        if (res.headers.get('X-CB-Media') === '1' && (res.status === 206 || res.status === 200)) {
+          var m = /\/(\d+)\s*$/.exec(res.headers.get('Content-Range') || '');
+          total = m ? Number(m[1]) : res.status === 200 ? Number(res.headers.get('Content-Length')) || null : null;
+        }
+        if (res.body && res.body.cancel) res.body.cancel().catch(function () {}); // the byte itself is not wanted
+        return { bytes: total, kept: false };
+      });
+    });
+  }).catch(function () { return none; });
 }
 /* ==== end VIDEOS ================================================================================================ */
 
@@ -605,25 +758,42 @@ function expectAdd(step, urls, reset, drop) {
       if (drop) { urls.forEach(function (u) { seen[u] = 1; }); list = list.filter(function (u) { return !seen[u]; }); urls = []; }
       list.forEach(function (u) { seen[u] = 1; });
       urls.forEach(function (u) { if (!seen[u]) { seen[u] = 1; list.push(u); } });
-      return c.put(expectKey(step), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } })).then(function () { return list.length; });
+      return c.put(expectKey(step), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } })).then(function () { return expectNames(c, [step]); }).then(function () { return list.length; });
     });
+  });
+}
+/** The names of the steps that have a list, kept in one small file: the audit must not have to list the whole cache
+ *  to find them (a cache with many thousands of files cannot be listed: see MEDIA_KEEP). */
+var EXPECT_INDEX = new URL('/__cb/expect-index', self.location.origin).toString();
+function expectNames(c, add) {
+  return c.match(EXPECT_INDEX).then(function (r) { return r ? r.json() : []; }, function () { return []; }).then(function (names) {
+    names = Array.isArray(names) ? names : [];
+    var fresh = (add || []).filter(function (n) { return names.indexOf(n) < 0; });
+    if (!fresh.length) return names;
+    names = names.concat(fresh);
+    return c.put(EXPECT_INDEX, new Response(JSON.stringify(names), { headers: { 'Content-Type': 'application/json' } })).then(function () { return names; });
   });
 }
 /** Is this address on the device? Our own files by their exact address; another site's by its path. */
 function has(c, u) {
   var cross = new URL(u).origin !== self.location.origin;
   if (!cross) return c.match(homeKey(u)).then(Boolean);
-  return c.match(videoKeyOf(u)).then(function (own) { return own || c.match(u, { ignoreSearch: true }); }).then(function (hit) { return Boolean(hit) && !(hit.type === 'opaque' && videoIs(u)); });
+  return mediaFind(videoKeyOf(u)).then(function (own) { return own || c.match(u, { ignoreSearch: true }); }).then(function (hit) { return Boolean(hit) && !(hit.type === 'opaque' && videoIs(u)); });
 }
-function audit() {
+function audit(known) {
   return caches.open(KEEP).then(function (c) {
-    return c.keys().then(function (reqs) {
-      var prefix = new URL('/__cb/expect/', self.location.origin).toString();
-      var lists = reqs.filter(function (r) { return r.url.indexOf(prefix) === 0; });
-      var out = { steps: [], total: 0, missing: 0, kept: reqs.length };
+    // The steps' lists are found by name: the names this worker has kept, the ones the page knows (`known`), and,
+    // for a Chromebook set up before the names were kept, a look through the cache when it can still be listed.
+    var prefix = new URL('/__cb/expect/', self.location.origin).toString();
+    return c.keys().then(function (reqs) { return { n: reqs.length, names: reqs.filter(function (r) { return r.url.indexOf(prefix) === 0; }).map(function (r) { return decodeURIComponent(r.url.slice(prefix.length)); }) }; }, function () { return { n: null, names: [] }; }).then(function (listed) {
+      return expectNames(c, listed.names.concat((known || []).filter(function (n) { return typeof n === 'string'; }))).then(function (names) { return { n: listed.n, names: names }; });
+    }).then(function (found) {
+      var lists = found.names.map(function (n) { return { url: expectKey(n), name: n }; });
+      var out = { steps: [], total: 0, missing: 0, kept: found.n };
       return lists.reduce(function (p, r) {
-        return p.then(function () { return c.match(r); }).then(function (res) { return res ? res.json() : []; }).then(function (list) {
-          var step = { step: decodeURIComponent(r.url.slice(prefix.length)), total: list.length, missing: 0, sample: [] };
+        return p.then(function () { return c.match(r.url); }).then(function (res) { return res ? res.json() : null; }).then(function (list) {
+          if (!list) return null; // (a name the page knows, with no list on the drive: that step has saved nothing yet)
+          var step = { step: r.name, total: list.length, missing: 0, sample: [] };
           var i = 0;
           var next = function () {
             if (i >= list.length) return Promise.resolve();
@@ -642,9 +812,38 @@ function readyMessage(d, port, e) {
     e.waitUntil(expectAdd(d.step.slice(0, 60), d.urls.filter(function (u) { return typeof u === 'string' && /^https?:/.test(u); }), d.reset === true, d.drop === true).then(function (n) { reply({ ok: true, n: n }); }, function () { reply({ ok: false }); }));
     return true;
   }
-  if (d.type === 'audit') { e.waitUntil(audit().then(reply, function () { reply(null); })); return true; }
+  if (d.type === 'audit') { e.waitUntil(audit(Array.isArray(d.steps) ? d.steps : null).then(reply, function () { reply(null); })); return true; }
   if (d.type === 'have' && Array.isArray(d.urls)) {
     e.waitUntil(caches.open(KEEP).then(function (c) { return Promise.all(d.urls.map(function (u) { return has(c, u).catch(function () { return false; }); })); }).then(reply, function () { reply(null); }));
+    return true;
+  }
+  // is the network there, as far as the last requests could tell? (NEEDS THE INTERNET)
+  if (d.type === 'net') { reply({ offline: self.navigator && self.navigator.onLine === false ? true : netLast === 'down' }); return true; }
+  // take files off the drive: our own by their exact address, another site's by its address without the signature.
+  // Answers how many were there. (A class of lesson videos that turned out not to fit is not left half-saved.)
+  if (d.type === 'drop' && Array.isArray(d.urls)) {
+    e.waitUntil(Promise.all([caches.open(KEEP), caches.open(MEDIA_KEEP)]).then(function (cs) {
+      return Promise.all(d.urls.map(function (u) {
+        var key, own;
+        try { own = new URL(u).origin === self.location.origin; key = own ? homeKey(u) : videoKeyOf(u); } catch (err) { return false; }
+        if (own) return cs[0].delete(key);
+        return Promise.all([cs[1].delete(key), cs[0].delete(key)]).then(function (r) { return r[0] || r[1]; }); // (the media cache, or where an earlier version put it)
+      }));
+    }).then(function (done) { keptN = null; reply(done.filter(Boolean).length); }, function () { reply(null); }));
+    return true;
+  }
+  // a record per saved lesson (VIDEOS: a lesson as a video alone)
+  if (d.type === 'watch-keep' && Array.isArray(d.recs)) {
+    e.waitUntil(watchKeep(d.recs).then(reply, function () { reply(null); }));
+    return true;
+  }
+  // how big each media file is, on the drive or on the server (videoSize); eight at a time
+  if (d.type === 'size' && Array.isArray(d.urls)) {
+    var sizes = new Array(d.urls.length), at = 0;
+    var sizeNext = function () { var i = at; at += 1; return i >= d.urls.length ? Promise.resolve() : videoSize(d.urls[i]).then(function (r) { sizes[i] = r; return sizeNext(); }); };
+    var sizeLanes = [];
+    for (var sl = 0; sl < 8; sl += 1) sizeLanes.push(sizeNext());
+    e.waitUntil(Promise.all(sizeLanes).then(function () { reply(sizes); }, function () { reply(null); }));
     return true;
   }
   // the saved copy of a page or list as text, with no network asked (null when it is not on the drive)
@@ -741,6 +940,7 @@ function syncOne(r) {
 
 function post(req) {
   var path = new URL(req.url).pathname;
+  if (path === WATCH_PATH) return watchStart(req); // VIDEOS (lane/home): with no network, the saved lesson
   if (path === '/__cb/identity' || path === '/__cb/added') {
     return req.clone().text().then(function (body) {
       return fetch(req.clone()).then(function (res) {
@@ -1559,9 +1759,12 @@ self.addEventListener('fetch', function (e) {
   // HOME (lane/home): a request that names a child home link gets this Chromebook's live link (or its saved copy)
   if (req.method === 'POST' && u.origin === self.location.origin) { e.respondWith(homePost(req)); return; }
   if (req.method !== 'GET') { if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } return; } // READY: self-test
-  if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(homeGet(req, u)); return; }
+  // (VIDEOS: a saved list of lessons, given out with no network, names only the lesson pages on the drive: videoListFit)
+  if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(LIB_RX.test(u.pathname) ? homeGet(req, u).then(videoListFit) : homeGet(req, u)); return; }
   var key = keyFor(req);
-  if (MEDIA_RX.test(u.pathname)) { e.respondWith(media(req, key)); return; }
+  if (u.origin === self.location.origin && LIB_RX.test(u.pathname)) { e.respondWith(networkFirst(req, key).then(videoListFit)); return; }
+  // (VIDEOS: a picture of the media store too, a lesson's poster: it is kept in the media cache, which media() looks in)
+  if (MEDIA_RX.test(u.pathname) || videoStore(req.url)) { e.respondWith(media(req, key)); return; }
   if (u.origin !== self.location.origin && req.destination !== 'image' && req.destination !== 'font' && req.destination !== 'style' && req.destination !== 'script') {
     if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } // READY (lane/home): the self-test reaches no network
     return;

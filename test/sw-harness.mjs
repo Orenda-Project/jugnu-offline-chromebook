@@ -64,7 +64,8 @@ function fakeCaches() {
         return undefined;
       },
       async put(k, res) { m.set(keyOf(k), res); },
-      async keys() { return [...m.keys()].map((u) => ({ url: u })); },
+      // (as a browser's: every entry, or with a request only the entries that answer it)
+      async keys(k, o = {}) { const all = [...m.keys()]; const want = k === undefined ? all : all.filter((u) => u === keyOf(k) || (o.ignoreSearch && noSearch(u) === noSearch(keyOf(k)))); return want.map((u) => ({ url: u })); },
       async delete(k) { return m.delete(keyOf(k)); },
       _m: m,
     };
@@ -112,6 +113,11 @@ export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js')
   return {
     net: state, caches,
     get: (p, init = {}) => dispatch(new Request(url(p), { method: 'GET', ...init })),
+    // a page being opened (a tab or a frame going to this address): the one kind of request a script cannot make
+    visit: (p) => {
+      const real = new Request(url(p), { method: 'GET', headers: { Accept: 'text/html' } });
+      return dispatch(new Proxy(real, { get(t, k) { if (k === 'mode') return 'navigate'; const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; } }));
+    },
     head: (p) => dispatch(new Request(url(p), { method: 'HEAD' })),
     put: (p, body, headers = {}) => dispatch(new Request(url(p), { method: 'PUT', headers, body })),
     post: (p, body, headers = {}) => dispatch(new Request(url(p), { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) })),
