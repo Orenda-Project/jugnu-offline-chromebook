@@ -14,7 +14,7 @@ try {
   if (process.env.CB_DEVICE_KEY) await page.goto(`${BASE}/cb?key=${encodeURIComponent(process.env.CB_DEVICE_KEY)}`, { waitUntil: 'load', timeout: 60000 });
   await page.goto(`${BASE}/cb?hub=${kid.token}`, { waitUntil: 'load', timeout: 60000 });
   await page.waitForTimeout(1500);
-  await page.click('#ready');
+  await page.click('#ready', { timeout: 5000 }).catch(() => {}); // a stopped Get ready carries on by itself
   // the first run reloads once, when the worker takes charge, and goes on by itself
   await page.waitForFunction(() => { const p = document.getElementById('phase'); const l = document.getElementById('log'); return (p && /Ready\./.test(p.textContent)) || (l && /stopped:/.test(l.textContent)); }, null, { timeout: 25 * 60 * 1000, polling: 1000 });
   const out = await page.evaluate(async () => ({

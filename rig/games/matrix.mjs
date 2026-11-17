@@ -84,7 +84,8 @@ async function flight(k, off) {
 async function challenge(k, off) {
   const rows = (await doorRows(k.page, k).catch((e) => { k.say('Games door did not open: ' + e.message.split('\n')[0]); return []; })).filter((r) => r.href && /^\/c\//.test(r.href));
   if (!rows.length) k.out.challenge.push({ name: '(none found behind the Games door)', ok: false });
-  for (const r of rows) {
+  const want = flag('games', '');   // --games=bigger,missing: only these (by the row's item)
+  for (const r of rows.filter((x) => !want || String(want).split(',').some((g) => String(x.item).indexOf(g) >= 0))) {
     const g = await playGame(k.page, { href: r.href, lang: k.lang, say: k.say, mic: k.mic, tag: `mx-${k.key}-${String(r.item).replace(/\W/g, '_')}${off ? '-off' : ''}`, maxMs: 6 * 60000 });
     // a reading with no network: its feedback is made on the device, under the page's own card
     let device = null;
@@ -108,7 +109,8 @@ async function getReady(k) {
   if (process.env.CB_DEVICE_KEY) await k.page.goto(`${BASE}/cb?key=${encodeURIComponent(process.env.CB_DEVICE_KEY)}`, { waitUntil: 'load', timeout: 60000 });
   await k.page.goto(`${BASE}/cb?hub=${k.token}`, { waitUntil: 'load', timeout: 60000 });
   await k.page.waitForTimeout(1500);
-  await k.page.click('#ready');
+  // a Get ready that was stopped part-way carries on by itself when the page opens (its button is then off)
+  await k.page.click('#ready', { timeout: 5000 }).catch(() => {});
   await k.page.waitForFunction(() => { const p = document.getElementById('phase'); const l = document.getElementById('log'); return (p && /Ready\./.test(p.textContent)) || (l && /stopped:/.test(l.textContent)); }, null, { timeout: 30 * 60 * 1000, polling: 1000 });
   const r = await k.page.evaluate(async () => ({ log: document.getElementById('log').textContent.trim().split('\n'), kept: (await (await caches.open('cb-pilot-v1')).keys()).length, games: localStorage.getItem('cb-games-ready'),
     usage: navigator.storage && navigator.storage.estimate ? Math.round((await navigator.storage.estimate()).usage / 1e6) : null, regs: (await navigator.serviceWorker.getRegistrations()).map((x) => x.scope.replace(location.origin, '')) }));
