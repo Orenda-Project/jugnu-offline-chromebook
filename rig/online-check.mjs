@@ -56,7 +56,8 @@ await ctx.addInitScript(() => {
 const fromNet = []; const fromDrive = []; // answers for files of another site (R2): from there, or given by the worker
 page.on('response', (r) => { if (!r.url().startsWith(BASE) && /^https?:/.test(r.url())) (r.fromServiceWorker() ? fromDrive : fromNet).push(r.url().split('?')[0].slice(-60)); });
 
-const keptVideos = () => page.evaluate(async () => (await (await caches.open('cb-pilot-v1')).keys()).filter((k) => /\.(mp4|webm)$/.test(new URL(k.url).pathname)).length);
+// (lesson videos on the drive: in the media cache; ones an earlier version saved may still be in the main one)
+const keptVideos = () => page.evaluate(() => (async () => { let n = 0; for (const name of ['cb-media-v1', 'cb-pilot-v1']) n += (await (await caches.open(name)).keys().catch(() => [])).filter((k) => /_web\.mp4$/.test(new URL(k.url).pathname)).length; return n; })());
 const home = async () => {
   await page.goto(`${BASE}/cb/home`, { waitUntil: 'load', timeout: 45000 }).catch(() => {});
   await page.waitForSelector('a.wq-door', { timeout: 25000 }).catch(() => {});

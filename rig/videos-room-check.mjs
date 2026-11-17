@@ -21,7 +21,7 @@ const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
 const { ctx, page, log } = await launch({ fresh: false });
 const cdp = await ctx.newCDPSession(page);
-const videos = () => page.evaluate(async () => (await (await caches.open('cb-pilot-v1')).keys()).filter((k) => /\.mp4$/.test(new URL(k.url).pathname)).length);
+const videos = () => page.evaluate(() => (async () => { let n = 0; for (const name of ['cb-media-v1', 'cb-pilot-v1']) n += (await (await caches.open(name)).keys().catch(() => [])).filter((k) => /_web\.mp4$/.test(new URL(k.url).pathname)).length; return n; })());
 try {
   await page.goto(`${BASE}/cb?key=${encodeURIComponent(KEY)}&stay=1&videos=${encodeURIComponent(gradesArg)}`, { waitUntil: 'load' });
   check('the offline worker is in charge', await controlled(page));

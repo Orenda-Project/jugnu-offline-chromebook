@@ -555,12 +555,41 @@ var VIDEO_STALL_MS = 45000; // no bytes for this long: given up, tried again by 
 function videoStore(url) { try { var u = new URL(url); return u.origin !== self.location.origin && VIDEO_STORE_RX.test(u.hostname) && READABLE_RX.test(u.pathname); } catch (e) { return false; } }
 function videoIs(url) { try { var u = new URL(url); return u.origin !== self.location.origin && VIDEO_RX.test(u.pathname); } catch (e) { return false; } }
 function videoKeyOf(url) { var u = new URL(url); return u.origin + u.pathname; }
+/* THE MEDIA STORE'S FILES IN A CACHE OF THEIR OWN (18 Nov 2026). With four classes of lesson videos on the drive the
+ * one cache held 15,979 files, and Chrome would no longer list it ("Failed to execute 'keys' on 'Cache': Operation
+ * too large": a cache's list may not pass about 10 MB; 14,062 files had just fitted). Every lane lists that cache
+ * (the audit, the storybooks' own check, a game's scoring with no network), so Get ready could never say "Ready"
+ * again. Lesson videos and their quiz clips are most of the files, by the thousand, and nothing needs them listed:
+ * what is fetched through this site from the media store is kept in MEDIA_KEEP, under its address without the
+ * signature. A file an earlier version put in the main cache is still found there, and is moved over when Get ready
+ * next looks at it (never while a child is playing it). */
+var MEDIA_KEEP = 'cb-media-v1';
+/** The kept copy of a media-store file, wherever it is (undefined when it is not on the drive). */
+function mediaFind(key) {
+  return caches.open(MEDIA_KEEP).then(function (m) { return m.match(key); }).then(function (hit) {
+    return hit || caches.open(KEEP).then(function (c) { return c.match(key); });
+  });
+}
+/** The same for Get ready: a readable copy found in the main cache is moved to the media cache first. */
+function mediaAdopt(key) {
+  return caches.open(MEDIA_KEEP).then(function (m) {
+    return m.match(key).then(function (hit) {
+      if (hit) return hit;
+      return caches.open(KEEP).then(function (c) {
+        return c.match(key).then(function (old) {
+          if (!old || old.type === 'opaque') return old;
+          return m.put(key, old.clone()).then(function () { return c.delete(key); }).then(function () { keptN = null; return m.match(key); }, function () { return old; });
+        });
+      });
+    });
+  });
+}
 /** The kept copy for a media request: the readable one saved through this site first; an unreadable video copy is not used. */
 function videoKept(url, key) {
   var u;
   try { u = new URL(url); } catch (e) { return kept(key); }
   if (u.origin === self.location.origin) return kept(key);
-  return caches.open(KEEP).then(function (c) { return c.match(videoKeyOf(url)); }).then(function (own) {
+  return mediaFind(videoKeyOf(url)).then(function (own) {
     if (own) return own;
     return kept(key).then(function (hit) { return hit && hit.type === 'opaque' && VIDEO_RX.test(u.pathname) ? undefined : hit; });
   });
@@ -569,8 +598,8 @@ function videoKept(url, key) {
 function videoSave(url, fresh) {
   var key = videoKeyOf(url);
   return caches.open(KEEP).then(function (c) {
-    return (fresh ? Promise.resolve(null) : c.match(key)).then(function (hit) {
-      if (hit) return { ok: true, had: true };
+    return (fresh ? Promise.resolve(null) : mediaAdopt(key)).then(function (hit) {
+      if (hit && hit.type !== 'opaque') return { ok: true, had: true };
       return homeState().then(function (st) {
         var ctl = typeof AbortController === 'function' ? new AbortController() : null;
         var stall = null;
@@ -593,9 +622,12 @@ function videoSave(url, fresh) {
             clearTimeout(stall);
             if (!got || (want && got !== want)) return { ok: false, why: 'short' };
             var whole = new Response(new Blob(chunks, { type: type }), { status: 200, headers: { 'Content-Type': type, 'Content-Length': String(got) } });
-            return c.put(key, whole).then(function () {
-              // unreadable copies of the same file (saved before, one per signature) are dropped: each is charged ~7 MB
-              return c.keys(key, { ignoreSearch: true }).then(function (same) { return Promise.all(same.filter(function (r) { return r.url !== key; }).map(function (r) { return c.delete(r); })); });
+            return caches.open(MEDIA_KEEP).then(function (m) { return m.put(key, whole); }).then(function () {
+              // copies of the same file in the main cache are dropped: an earlier readable one, and unreadable ones
+              // (saved before, one per signature), each charged ~7 MB
+              return c.keys(key, { ignoreSearch: true }).then(function (same) {
+                return Promise.all(same.filter(function (r) { try { return videoKeyOf(r.url) === key; } catch (err) { return false; } }).map(function (r) { return c.delete(r); }));
+              }, function () { return null; });
             }).then(function () { return { ok: true, bytes: got }; });
           });
         }).catch(function (e) { clearTimeout(stall); return { ok: false, why: e && e.name === 'QuotaExceededError' ? 'no_room' : 'failed' }; });
@@ -674,7 +706,7 @@ function videoSize(url) {
   var key;
   try { key = videoKeyOf(url); } catch (e) { return Promise.resolve({ bytes: null, kept: false }); }
   var none = { bytes: null, kept: false };
-  return caches.open(KEEP).then(function (c) { return c.match(key); }).then(function (hit) {
+  return mediaAdopt(key).then(function (hit) {
     if (hit && hit.type !== 'opaque') return hit.blob().then(function (b) { return { bytes: b.size, kept: true }; });
     if (savedOnly()) return none;
     return homeState().then(function (st) {
@@ -726,25 +758,42 @@ function expectAdd(step, urls, reset, drop) {
       if (drop) { urls.forEach(function (u) { seen[u] = 1; }); list = list.filter(function (u) { return !seen[u]; }); urls = []; }
       list.forEach(function (u) { seen[u] = 1; });
       urls.forEach(function (u) { if (!seen[u]) { seen[u] = 1; list.push(u); } });
-      return c.put(expectKey(step), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } })).then(function () { return list.length; });
+      return c.put(expectKey(step), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } })).then(function () { return expectNames(c, [step]); }).then(function () { return list.length; });
     });
+  });
+}
+/** The names of the steps that have a list, kept in one small file: the audit must not have to list the whole cache
+ *  to find them (a cache with many thousands of files cannot be listed: see MEDIA_KEEP). */
+var EXPECT_INDEX = new URL('/__cb/expect-index', self.location.origin).toString();
+function expectNames(c, add) {
+  return c.match(EXPECT_INDEX).then(function (r) { return r ? r.json() : []; }, function () { return []; }).then(function (names) {
+    names = Array.isArray(names) ? names : [];
+    var fresh = (add || []).filter(function (n) { return names.indexOf(n) < 0; });
+    if (!fresh.length) return names;
+    names = names.concat(fresh);
+    return c.put(EXPECT_INDEX, new Response(JSON.stringify(names), { headers: { 'Content-Type': 'application/json' } })).then(function () { return names; });
   });
 }
 /** Is this address on the device? Our own files by their exact address; another site's by its path. */
 function has(c, u) {
   var cross = new URL(u).origin !== self.location.origin;
   if (!cross) return c.match(homeKey(u)).then(Boolean);
-  return c.match(videoKeyOf(u)).then(function (own) { return own || c.match(u, { ignoreSearch: true }); }).then(function (hit) { return Boolean(hit) && !(hit.type === 'opaque' && videoIs(u)); });
+  return mediaFind(videoKeyOf(u)).then(function (own) { return own || c.match(u, { ignoreSearch: true }); }).then(function (hit) { return Boolean(hit) && !(hit.type === 'opaque' && videoIs(u)); });
 }
-function audit() {
+function audit(known) {
   return caches.open(KEEP).then(function (c) {
-    return c.keys().then(function (reqs) {
-      var prefix = new URL('/__cb/expect/', self.location.origin).toString();
-      var lists = reqs.filter(function (r) { return r.url.indexOf(prefix) === 0; });
-      var out = { steps: [], total: 0, missing: 0, kept: reqs.length };
+    // The steps' lists are found by name: the names this worker has kept, the ones the page knows (`known`), and,
+    // for a Chromebook set up before the names were kept, a look through the cache when it can still be listed.
+    var prefix = new URL('/__cb/expect/', self.location.origin).toString();
+    return c.keys().then(function (reqs) { return { n: reqs.length, names: reqs.filter(function (r) { return r.url.indexOf(prefix) === 0; }).map(function (r) { return decodeURIComponent(r.url.slice(prefix.length)); }) }; }, function () { return { n: null, names: [] }; }).then(function (listed) {
+      return expectNames(c, listed.names.concat((known || []).filter(function (n) { return typeof n === 'string'; }))).then(function (names) { return { n: listed.n, names: names }; });
+    }).then(function (found) {
+      var lists = found.names.map(function (n) { return { url: expectKey(n), name: n }; });
+      var out = { steps: [], total: 0, missing: 0, kept: found.n };
       return lists.reduce(function (p, r) {
-        return p.then(function () { return c.match(r); }).then(function (res) { return res ? res.json() : []; }).then(function (list) {
-          var step = { step: decodeURIComponent(r.url.slice(prefix.length)), total: list.length, missing: 0, sample: [] };
+        return p.then(function () { return c.match(r.url); }).then(function (res) { return res ? res.json() : null; }).then(function (list) {
+          if (!list) return null; // (a name the page knows, with no list on the drive: that step has saved nothing yet)
+          var step = { step: r.name, total: list.length, missing: 0, sample: [] };
           var i = 0;
           var next = function () {
             if (i >= list.length) return Promise.resolve();
@@ -763,7 +812,7 @@ function readyMessage(d, port, e) {
     e.waitUntil(expectAdd(d.step.slice(0, 60), d.urls.filter(function (u) { return typeof u === 'string' && /^https?:/.test(u); }), d.reset === true, d.drop === true).then(function (n) { reply({ ok: true, n: n }); }, function () { reply({ ok: false }); }));
     return true;
   }
-  if (d.type === 'audit') { e.waitUntil(audit().then(reply, function () { reply(null); })); return true; }
+  if (d.type === 'audit') { e.waitUntil(audit(Array.isArray(d.steps) ? d.steps : null).then(reply, function () { reply(null); })); return true; }
   if (d.type === 'have' && Array.isArray(d.urls)) {
     e.waitUntil(caches.open(KEEP).then(function (c) { return Promise.all(d.urls.map(function (u) { return has(c, u).catch(function () { return false; }); })); }).then(reply, function () { reply(null); }));
     return true;
@@ -773,11 +822,12 @@ function readyMessage(d, port, e) {
   // take files off the drive: our own by their exact address, another site's by its address without the signature.
   // Answers how many were there. (A class of lesson videos that turned out not to fit is not left half-saved.)
   if (d.type === 'drop' && Array.isArray(d.urls)) {
-    e.waitUntil(caches.open(KEEP).then(function (c) {
+    e.waitUntil(Promise.all([caches.open(KEEP), caches.open(MEDIA_KEEP)]).then(function (cs) {
       return Promise.all(d.urls.map(function (u) {
-        var key;
-        try { key = new URL(u).origin === self.location.origin ? homeKey(u) : videoKeyOf(u); } catch (err) { return false; }
-        return c.delete(key);
+        var key, own;
+        try { own = new URL(u).origin === self.location.origin; key = own ? homeKey(u) : videoKeyOf(u); } catch (err) { return false; }
+        if (own) return cs[0].delete(key);
+        return Promise.all([cs[1].delete(key), cs[0].delete(key)]).then(function (r) { return r[0] || r[1]; }); // (the media cache, or where an earlier version put it)
       }));
     }).then(function (done) { keptN = null; reply(done.filter(Boolean).length); }, function () { reply(null); }));
     return true;

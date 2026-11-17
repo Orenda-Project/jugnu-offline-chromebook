@@ -646,7 +646,7 @@
       return seq(steps.filter(function (s) { return !s.late; }));
     }).then(function (bad) {
       // Ready only when the worker confirms every file each step set out to save is on this Chromebook.
-      return ask({ type: 'audit' }, 120000).then(function (a) {
+      return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 120000).then(function (a) {
         var late = steps.filter(function (s) { return s.late; });
         var lateIds = late.map(function (s) { return s.id; });
         var miss = a ? a.steps.filter(function (s) { return s.missing && lateIds.indexOf(s.step) < 0; }) : [];
@@ -666,7 +666,7 @@
         space().then(function (s) { report({ ready: { secs: secs, files: a.total, kept: a.kept, used_mb: Math.round(s.used / 1e6), room_mb: s.room == null ? null : Math.round(s.room / 1e6), persisted: s.safe, device: DEVICE } }); });
         return seq(late).then(function (badLate) {
           // the late steps are held to the same proof: every file they set out to save is on the drive
-          return ask({ type: 'audit' }, 180000).then(function (a2) {
+          return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 180000).then(function (a2) {
             late.forEach(function (s) {
               var m = a2 && a2.steps.filter(function (x) { return x.step === s.id && x.missing; })[0];
               if (!m || badLate.indexOf(s) >= 0) return;
@@ -809,7 +809,7 @@
       ls('cb-ready-files', JSON.stringify(m.ready || []));
       return Promise.all((m.ready || []).map(function (f) { return new Promise(function (ok) { if (document.querySelector('script[data-ready="' + f + '"]')) return ok(); var s = document.createElement('script'); s.src = '/__cb/ready/' + f; s.setAttribute('data-ready', f); s.onload = s.onerror = ok; document.head.appendChild(s); }); }));
     });
-    return load.then(function () { return ask({ type: 'audit' }, 180000); }).then(function (a) {
+    return load.then(function () { return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 180000); }).then(function (a) {
       if (!a) { all.push({ group: 'Files', name: 'offline worker', ok: false, why: 'not installed: press Get ready first' }); return null; }
       a.steps.forEach(function (s) { all.push({ group: 'Files', name: s.step.replace(/^x-/, '') + ': ' + s.total + ' files', ok: !s.missing, why: s.missing ? s.missing + ' not on this Chromebook, e.g. ' + short(s.sample[0]) : '' }); });
       return builtInChecks(tester).then(function (rows) { all = all.concat(rows); });

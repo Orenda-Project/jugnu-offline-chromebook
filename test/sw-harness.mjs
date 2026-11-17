@@ -64,7 +64,8 @@ function fakeCaches() {
         return undefined;
       },
       async put(k, res) { m.set(keyOf(k), res); },
-      async keys() { return [...m.keys()].map((u) => ({ url: u })); },
+      // (as a browser's: every entry, or with a request only the entries that answer it)
+      async keys(k, o = {}) { const all = [...m.keys()]; const want = k === undefined ? all : all.filter((u) => u === keyOf(k) || (o.ignoreSearch && noSearch(u) === noSearch(keyOf(k)))); return want.map((u) => ({ url: u })); },
       async delete(k) { return m.delete(keyOf(k)); },
       _m: m,
     };

@@ -20,11 +20,16 @@ try {
     const c = await caches.open('cb-pilot-v1');
     const keys = await c.keys();
     const pick = (rx) => keys.find((k) => rx.test(k.url));
+    // (lesson videos are in the media cache; one an earlier version saved may still be in the main one)
+    const m = await caches.open('cb-media-v1');
+    const mvideo = (await m.keys()).find((k) => /_web\.mp4$/.test(k.url));
+    if (mvideo) await m.delete(mvideo);
     // (the Games list the door itself asks for: the home child's own, with no class named. Get ready also keeps the
     //  lists of the other classes, which the door only asks for when a child taps another class)
     const video = pick(/_web\.mp4$/), pic = pick(/\/s\/[0-9a-f-]{36}\/p01-[0-9a-f]+\.webp$/), games = pick(/\/api\/wq\/doors\/h\/[^?]+\?kid=[0-9a-f]*&d=games&l=en$/);
     const out = [];
-    for (const k of [video, pic, games]) if (k) { await c.delete(k); out.push(k.url.replace(location.origin, '').split('?')[0].split('/').slice(-2).join('/') + (k === games ? ' (the Games list)' : '')); }
+    if (mvideo) out.push(mvideo.url.split('/').slice(-2).join('/'));
+    for (const k of [mvideo ? null : video, pic, games]) if (k) { await c.delete(k); out.push(k.url.replace(location.origin, '').split('?')[0].split('/').slice(-2).join('/') + (k === games ? ' (the Games list)' : '')); }
     return out;
   });
   check('three saved things were removed from the drive', gone.length === 3, gone.join(' | '));

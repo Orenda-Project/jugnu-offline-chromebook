@@ -40,7 +40,8 @@ try {
   else if (!has('skip-ready')) say('      Get ready carried on by itself (the last run was cut short)');
   let interrupted = !has('interrupt');
   let cuts = has('interrupt-videos') ? 0 : 2; let cutAt = 0;
-  const onDrive = () => page.evaluate(async () => (await (await caches.open('cb-pilot-v1')).keys()).filter((k) => /\.mp4$/.test(new URL(k.url).pathname)).length).catch(() => -1);
+  // (lesson videos are in the media cache; ones an earlier version saved may still be in the main one)
+  const onDrive = () => page.evaluate(() => (async () => { let n = 0; for (const name of ['cb-media-v1', 'cb-pilot-v1']) n += (await (await caches.open(name)).keys().catch(() => [])).filter((k) => /_web\.mp4$/.test(new URL(k.url).pathname)).length; return n; })()).catch(() => -1);
   let last = '';
   for (; !has('skip-ready');) {
     await page.waitForTimeout(5000);
