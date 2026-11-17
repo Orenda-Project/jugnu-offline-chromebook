@@ -128,6 +128,14 @@ run the server dropped 511 requests and answered none; while offline the databas
 the network came back the devices opened 40 runs and sent 150 batches, 34 game results and 16 recordings, with
 nobody pressing anything.
 
+The same offline run was repeated on the code of all four lanes together (speech, home, stories, games): 53 minutes
+with the switch on, 499 requests dropped and none answered, the big flight 40 of 40 parts, the dots 2 of 2, warm-up,
+bigger, read along and read aloud 32 of 32, Listen 0 of 8. With no network a reading on the Challenge page got its
+feedback from the device: English 36 of 36 and 63 of 63 words lit (three stars), Urdu 34 of 38 and 38 of 39 (the rig
+"read" with Jugnu's own recording of each story); never words a minute. After reconnect each recording was uploaded
+and scored by Jugnu. Evidence: `logs/matrix-offline-1/`, `-2/`, `-3-reads/` and `logs/evidence-*.txt` on the lane's
+machine (logs are not committed).
+
 What cannot be done by the pilot, and why:
 
 - **Listen with no network.** The story is on the device and plays; its questions and their answer choices are asked
