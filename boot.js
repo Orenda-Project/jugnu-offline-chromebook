@@ -314,6 +314,31 @@
       } catch (e) { /* the screens as they are */ }
     }
 
+    // The Challenge's screens (/c/…) on a short page. They are sized for a phone held upright: on a 633 px page the
+    // number pad's 0 and delete, the microphone notice's OK and a result card's Home sat 120 to 250 px below the page
+    // (the taller Urdu lines most of all), so a child had to scroll to answer. A screen taller than the page is
+    // scaled down to it (never below 0.7). A screen that shows the story's words is left alone: reading size
+    // matters more there, and a story scrolls by design.
+    if (/^\/c\//.test(location.pathname)) {
+      var fitCT = null;
+      var fitChallenge = function () {
+        var scr = document.querySelector('#wq section.wq-screen');
+        if (!scr) return;
+        scr.style.zoom = '';
+        if (window.innerWidth < 600 || scr.querySelector('.wqc-w')) return;
+        var page = document.documentElement.scrollHeight;
+        var have = window.innerHeight;
+        if (page <= have + 2) return;
+        var own = scr.getBoundingClientRect().height;
+        var rest = page - own;                       // what is above and below the screen keeps its size
+        if (own > 0 && have - rest > 120) scr.style.zoom = String(Math.max(0.7, (have - rest - 2) / own));
+      };
+      try {
+        new MutationObserver(function () { clearTimeout(fitCT); fitCT = setTimeout(fitChallenge, 50); }).observe(document.documentElement, { childList: true, subtree: true });
+        window.addEventListener('resize', fitChallenge);
+      } catch (e) { /* the screens as they are */ }
+    }
+
     // A Chromebook has a keyboard; Jugnu's number pads and letter strip are for a touch screen and take no key at
     // all (no key handler in the battery's screens or the Challenge page). A digit, a letter, Backspace or Enter
     // presses the on-screen key of that name, so a child can type "12" and press Enter. Urdu digits count as digits.
