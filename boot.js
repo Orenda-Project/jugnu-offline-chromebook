@@ -204,6 +204,26 @@
     window.addEventListener('online', function () { setTimeout(drain, 1500); });
     setTimeout(drain, 3500);
 
+    // The battery's screens on a short page. cb-fit.css gives the answer tiles and keys sizes that fit 633 px; what
+    // still does not fit (Urdu lines are taller, a long word problem) is scaled down to the page, so no answer and
+    // no key is ever below it. A story is left alone: it scrolls by design, one part at a time.
+    if (/^\/sa\/play\.html/.test(location.pathname)) {
+      var fitT = null;
+      var fitScreen = function () {
+        var scr = document.querySelector('#sae-root .sae-screen');
+        if (!scr) return;
+        if (scr.querySelector('.sae-passage')) { if (scr.style.zoom) scr.style.zoom = ''; return; }
+        scr.style.zoom = '';
+        var need = scr.scrollHeight;
+        var have = window.innerHeight;
+        if (need > have + 2) scr.style.zoom = String(Math.max(0.7, (have - 2) / need));
+      };
+      try {
+        new MutationObserver(function () { clearTimeout(fitT); fitT = setTimeout(fitScreen, 50); }).observe(document.documentElement, { childList: true, subtree: true });
+        window.addEventListener('resize', fitScreen);
+      } catch (e) { /* the screens as they are */ }
+    }
+
     // A Chromebook has a keyboard; Jugnu's number pads and letter strip are for a touch screen and take no key at
     // all (no key handler in the battery's screens or the Challenge page). A digit, a letter, Backspace or Enter
     // presses the on-screen key of that name, so a child can type "12" and press Enter. Urdu digits count as digits.
