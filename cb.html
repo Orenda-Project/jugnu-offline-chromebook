@@ -3,48 +3,82 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Jugnu offline test</title>
+<link rel="manifest" href="/cb/app.webmanifest">
+<title>Jugnu on this Chromebook</title>
 <style>
-  :root { color-scheme: light; --ink: #1f2937; --quiet: #6b7280; --go: #15803d; --warn: #b45309; --card: #fffdf7; --line: #e7dfc9; }
-  body { margin: 0; font: 17px/1.5 system-ui, sans-serif; background: #f6f1e4; color: var(--ink); }
-  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 28px; margin: 0 0 4px; }
-  .sub { color: var(--quiet); margin: 0 0 20px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 0 0 16px; }
-  .card h2 { font-size: 18px; margin: 0 0 8px; }
-  button.big { font: 600 18px system-ui, sans-serif; padding: 14px 22px; border-radius: 10px; border: 0; background: var(--go); color: #fff; cursor: pointer; }
+  :root { color-scheme: light; --ink: #1f2937; --quiet: #6b7280; --go: #15803d; --warn: #b45309; --bad: #b91c1c; --card: #fffdf7; --line: #e7dfc9; }
+  body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: #f6f1e4; color: var(--ink); }
+  main { max-width: 860px; margin: 0 auto; padding: 16px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 2px; }
+  .sub { color: var(--quiet); margin: 0 0 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 0 0 12px; }
+  .card h2 { font-size: 17px; margin: 0 0 6px; }
+  .card p { margin: 4px 0 8px; }
+  button.big, a.big { font: 600 17px system-ui, sans-serif; padding: 12px 20px; border-radius: 10px; border: 0; background: var(--go); color: #fff; cursor: pointer; display: inline-block; text-decoration: none; }
   button.big[disabled] { background: #9ca3af; cursor: default; }
-  .bar { height: 10px; background: #e5e7eb; border-radius: 6px; overflow: hidden; margin: 12px 0 6px; }
+  button.soft { font: 600 15px system-ui, sans-serif; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+  button.soft[disabled] { color: #9ca3af; cursor: default; }
+  .bar { height: 10px; background: #e5e7eb; border-radius: 6px; overflow: hidden; margin: 10px 0 6px; }
   .bar i { display: block; height: 100%; width: 0; background: var(--go); transition: width .3s; }
   .state { font-weight: 600; }
   .state.off { color: var(--warn); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
-  .grid a { display: block; padding: 14px; border-radius: 10px; background: #fff; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .grid a { display: block; padding: 12px; border-radius: 10px; background: #fff; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 600; }
   .grid a small { display: block; font-weight: 400; color: var(--quiet); }
   ol { margin: 6px 0 0; padding-left: 22px; }
-  #log { font: 13px/1.4 ui-monospace, monospace; color: var(--quiet); white-space: pre-wrap; max-height: 140px; overflow: auto; }
+  #steps { list-style: none; margin: 8px 0 0; padding: 0; columns: 2; column-gap: 18px; font-size: 14px; }
+  #steps li { break-inside: avoid; padding: 2px 0 2px 22px; position: relative; color: var(--quiet); }
+  #steps li::before { content: '○'; position: absolute; left: 2px; }
+  #steps li.run { color: var(--ink); font-weight: 600; }
+  #steps li.run::before { content: '◐'; color: var(--go); }
+  #steps li.ok { color: var(--ink); }
+  #steps li.ok::before { content: '✓'; color: var(--go); }
+  #steps li.bad { color: var(--bad); }
+  #steps li.bad::before { content: '!'; font-weight: 700; }
+  #steps li small { font-weight: 400; color: var(--quiet); }
+  #log { font: 12px/1.4 ui-monospace, monospace; color: var(--quiet); white-space: pre-wrap; max-height: 110px; overflow: auto; margin-top: 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .vids label { display: inline-block; margin: 2px 12px 2px 0; white-space: nowrap; }
+  .vids small { color: var(--quiet); }
+  #test-out { font-size: 14px; margin-top: 8px; }
+  #test-out .ok { color: var(--go); font-weight: 600; }
+  #test-out .bad { color: var(--bad); font-weight: 600; }
+  #test-out ul { margin: 4px 0 8px; padding-left: 20px; }
+  #test-out li { margin: 1px 0; }
   .hidden { display: none; }
   iframe.warm { position: absolute; width: 1366px; height: 633px; left: -20000px; top: 0; border: 0; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Jugnu offline test</h1>
-  <p class="sub">On this Chromebook, in Guest. Network: <span id="net" class="state">…</span> · <span id="kept">0</span> files saved here</p>
+  <h1>Jugnu on this Chromebook</h1>
+  <p class="sub">Network: <span id="net" class="state">…</span> · <span id="kept">0</span> files saved here · <span id="space">…</span></p>
 
   <div class="card" id="step1">
     <h2>1. Get ready for offline (Wi-Fi on)</h2>
-    <p>Saves Jugnu, two quizzes, the Grade 1 storybooks, the number game and the reading game on this Chromebook. Takes a few minutes.</p>
-    <button class="big" id="ready">Get ready for offline</button>
+    <p>Saves Jugnu on this Chromebook: the child home, storybooks, games, quizzes and lesson videos. It can be stopped and pressed again: it carries on from where it was.</p>
+    <div class="vids" id="vids"></div>
+    <div class="row">
+      <button class="big" id="ready">Get ready for offline</button>
+      <button class="soft hidden" id="again" type="button">Start again from the beginning</button>
+    </div>
     <div class="bar"><i id="pct"></i></div>
     <div id="phase" class="sub"></div>
+    <ol id="steps"></ol>
     <div id="log"></div>
+  </div>
+
+  <div class="card" id="check">
+    <h2>Check this Chromebook</h2>
+    <p>Opens every saved page, story, game and video from this Chromebook alone, as with the Wi-Fi off, and lists anything missing. Wi-Fi can stay on.</p>
+    <div class="row"><button class="soft" id="test" type="button">Check that everything opens without Wi-Fi</button> <span id="test-now" class="sub" style="margin:0"></span></div>
+    <div id="test-out"></div>
   </div>
 
   <div class="card hidden" id="who">
     <h2>Who's playing?</h2>
     <p id="child" class="state"></p>
-    <p><a class="big" id="pick" href="/who" style="display:inline-block;text-decoration:none;font:600 18px system-ui,sans-serif;padding:14px 22px;border-radius:10px;background:#15803d;color:#fff">Who's playing? Tap here</a></p>
+    <p><a class="big" id="pick" href="/who">Who's playing? Tap here</a></p>
   </div>
 
   <div class="card hidden" id="step2">
@@ -53,8 +87,8 @@
       <li>Click the Wi-Fi icon (bottom right) and switch Wi-Fi <b>off</b>. "Network" above turns orange.</li>
       <li>Open any of these and play. Everything comes from this Chromebook.</li>
     </ol>
-    <div class="grid" id="links" style="margin-top:12px"></div>
-    <p class="sub" style="margin-top:12px">Another child's turn? <button id="next">Next child</button> (the quiz forgets the last child on this Chromebook)</p>
+    <div class="grid" id="links" style="margin-top:10px"></div>
+    <p class="sub" style="margin-top:10px">Another child's turn? <button id="next" class="soft">Next child</button> (the quiz forgets the last child on this Chromebook)</p>
   </div>
 
   <div class="card hidden" id="step3">
@@ -64,17 +98,38 @@
   </div>
 </main>
 <script>
+/* The Chromebook's start page (lane/home owns this file).
+ *
+ * GET READY saves everything a child needs, step by step. Each step says what it is doing in real numbers (files saved
+ * of files wanted), is tried again when a download fails, waits by itself when the Wi-Fi drops, and is remembered when
+ * done: pressing Get ready again, or opening this page after the Chromebook was closed half-way, carries on from the
+ * step that was running. "Ready." is said only when the offline worker confirms every file a step set out to save is
+ * on the drive. Other areas add their own steps as ready/<name>.js (contract: ready/README.md).
+ *
+ * CHECK THIS CHROMEBOOK opens every saved page from the saved copy alone (the worker reaches no network while it
+ * runs), and lists what is missing. */
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
+  var ls = function (k, v) { try { if (v === undefined) return localStorage.getItem(k); if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} return null; };
+  var lsJson = function (k, dflt) { try { var v = JSON.parse(ls(k) || 'null'); return v == null ? dflt : v; } catch (e) { return dflt; } };
+  var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  var delay = function (ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); };
+  var mb = function (bytes) { return bytes >= 1e9 ? (bytes / 1e9).toFixed(1) + ' GB' : Math.round(bytes / 1e6) + ' MB'; };
+  // an address as a teacher can read it: this site's name, a home link's long token and a signature are left out
+  var short = function (u) { return String(u || '').replace(location.origin, '').replace(/eyJ[A-Za-z0-9_-]{17,400}\.[A-Za-z0-9_-]{22}/g, '…').replace(/~h[0-9a-z]+~/g, '…').replace(/\?X-Amz.*$/, '').slice(0, 100); };
   var CFG = null;
-  // The device key arrives once, in this Chromebook's setup link (/cb?key=…); it unlocks the school's class lists.
-  (function () {
-    var k = new URLSearchParams(location.search).get('key');
-    if (k) { try { localStorage.setItem('cb-key', k); } catch (e) {} history.replaceState(null, '', '/cb'); }
-  }());
-  var KEY = (function () { try { return localStorage.getItem('cb-key') || ''; } catch (e) { return ''; } }());
-  function child() { try { return JSON.parse(localStorage.getItem('cb-child') || 'null'); } catch (e) { return null; } }
+
+  // The device key arrives once, in this Chromebook's setup link (/cb?key=…); it unlocks the school's class lists and
+  // lets this Chromebook ask the server for its own child home.
+  var Q = new URLSearchParams(location.search);
+  if (Q.get('key')) { ls('cb-key', Q.get('key')); Q.delete('key'); history.replaceState(null, '', '/cb' + (Q.toString() ? '?' + Q : '')); }
+  var KEY = ls('cb-key') || '';
+  var DEVICE = ls('cb-device') || (function () { var d = 'd' + Math.random().toString(36).slice(2, 12); ls('cb-device', d); return d; }());
+  // ?videos=none | all | 1,2,3 : which classes' lesson videos Get ready saves (remembered; else the ticks below).
+  if (Q.get('videos')) ls('cb-video-grades', Q.get('videos'));
+
+  function child() { return lsJson('cb-child', null); }
   function showChild() {
     var c = child();
     if (!KEY) return;
@@ -83,32 +138,127 @@
     $('pick').textContent = c ? 'Not ' + c.name + '? Pick who is playing' : "Who's playing? Tap here";
   }
   function log(t) { var l = $('log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; }
+  var asking = []; // questions put to the offline worker and not yet answered
   function ask(msg, wait) {
     var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
     if (!sw) return Promise.resolve(null);
     return new Promise(function (ok) {
-      var ch = new MessageChannel(); var t = setTimeout(function () { ok(null); }, wait || 4000);
-      ch.port1.onmessage = function (e) { clearTimeout(t); ok(e.data); };
+      var ch = new MessageChannel();
+      var done = function (v) { clearTimeout(t); var i = asking.indexOf(done); if (i >= 0) asking.splice(i, 1); ok(v); };
+      var t = setTimeout(function () { done(null); }, wait || 4000);
+      asking.push(done);
+      ch.port1.onmessage = function (e) { done(e.data); };
       sw.postMessage(msg, [ch.port2]);
     });
+  }
+  // A new version of the worker took over (a deploy while Get ready runs): the old one will never answer. Every open
+  // question ends now with "no answer", and the batch it was is asked again of the new worker at once.
+  if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', function () { asking.slice().forEach(function (done) { done(null); }); });
+  /* Room on this Chromebook: what Jugnu uses, what is left for it, and whether the browser promised not to clear it. */
+  function space() {
+    var st = navigator.storage;
+    if (!st || !st.estimate) return Promise.resolve({ used: 0, free: null, safe: null });
+    return st.estimate().then(function (e) {
+      return Promise.resolve(st.persisted ? st.persisted() : null).then(function (p) { return { used: e.usage || 0, quota: e.quota || 0, free: e.quota ? Math.max(0, e.quota - (e.usage || 0)) : null, safe: p }; });
+    }, function () { return { used: 0, free: null, safe: null }; });
   }
   function status() {
     var on = navigator.onLine; $('net').textContent = on ? 'online' : 'OFF'; $('net').className = 'state' + (on ? '' : ' off');
     ask({ type: 'stats' }).then(function (s) { if (s) $('kept').textContent = s.kept; });
+    space().then(function (s) { $('space').textContent = mb(s.used) + ' used' + (s.free == null ? '' : ', room for ' + mb(s.free) + ' more') + (s.safe === false ? ' · not yet protected from clean-up' : ''); });
     ask({ type: 'outbox' }).then(function (l) {
       if (!l || !l.length) return;
       $('step3').classList.remove('hidden');
       $('outbox').innerHTML = l.map(function (r) {
-        return (r.done ? '✓ Sent: ' : '⏳ Waiting to send: ') + (r.name || 'a child') + ' — ' + r.answers + ' answers' + (r.err && !r.done ? ' (will retry)' : '');
+        return (r.done ? '✓ Sent: ' : '⏳ Waiting to send: ') + esc(r.name || 'a child') + ' — ' + r.answers + ' answers' + (r.err && !r.done ? ' (will retry)' : '');
       }).join('<br>');
     });
     if (on && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'report' });
   }
-  setInterval(status, 3000);
+  setInterval(status, 5000);
   addEventListener('online', status); addEventListener('offline', status);
 
-  function setPct(p, phase) { $('pct').style.width = Math.round(p) + '%'; if (phase) $('phase').textContent = phase; }
-  function warm(urls) { return ask({ type: 'warm', urls: urls }, 240000); }
+  /* ---------------- the run: steps, their progress, what is remembered ---------------- */
+  var RUN_KEY = 'cb-run';          // {v, at, running, done:{stepId:{at, files, note}}, ctx:{kid, games}}
+  var RUN_MAX_AGE_MS = 12 * 3600e3; // older than this: Get ready starts from the top (content changes)
+  var steps = [];                   // [{id, name, run, late, check, el}]
+  var cur = null;                   // the step running now
+  var full = false;                 // the drive ran out of room
+  function loadRun() { var r = lsJson(RUN_KEY, null); return r && r.v === 2 && Date.now() - r.at < RUN_MAX_AGE_MS ? r : { v: 2, at: Date.now(), done: {}, ctx: {} }; }
+  var run = loadRun();
+  function saveRun() { ls(RUN_KEY, JSON.stringify(run)); }
+
+  function drawSteps() {
+    $('steps').innerHTML = steps.map(function (s) { return '<li data-step="' + esc(s.id) + '">' + esc(s.name) + ' <small></small></li>'; }).join('');
+    steps.forEach(function (s) { s.el = $('steps').querySelector('[data-step="' + s.id + '"]'); var d = run.done[s.id]; if (d) mark(s, 'ok', d.note || ''); });
+  }
+  function mark(s, cls, note) { if (!s.el) return; s.el.className = cls; s.el.querySelector('small').textContent = note ? '— ' + note : ''; }
+  function overall(within) {
+    var core = steps.filter(function (s) { return !s.late; });
+    var n = core.filter(function (s) { return run.done[s.id]; }).length + (cur && !cur.late ? Math.max(0, Math.min(1, within || 0)) : 0);
+    $('pct').style.width = Math.round(100 * n / Math.max(1, core.length)) + '%';
+  }
+  /** A step's own progress: `pct` 0-100 within the step (a step that counts files passes none: warm() counts). */
+  function setPct(pct, text) {
+    if (text && cur) mark(cur, 'run', text);
+    if (text && cur && !cur.late) $('phase').textContent = text;
+    if (typeof pct === 'number' && cur) { cur.within = pct / 100; overall(cur.within); }
+  }
+
+  /* ---------------- saving files: small batches, each answered; failures tried again; a dropped Wi-Fi waited out ---- */
+  function ping() { return fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"ping":1}' }).then(function (r) { return r.status === 204 || r.ok; }, function () { return false; }); }
+  function waitOnline() {
+    return ping().then(function (up) {
+      if (up) return null;
+      if (cur) mark(cur, 'run', 'waiting for the Wi-Fi to come back…');
+      $('phase').textContent = 'Waiting for the Wi-Fi to come back. Get ready carries on by itself.';
+      return delay(5000).then(waitOnline);
+    });
+  }
+  function saveBatch(urls, opts, tries) {
+    return ask({ type: 'warm', urls: urls, readable: !!opts.readable, fresh: !!opts.fresh, lanes: opts.lanes }, opts.wait || 300000).then(function (r) {
+      var gone = (r && r.gone) || [];
+      if (r && r.full) { full = true; return { warmed: r.warmed, failed: r.failed, gone: gone }; }
+      // no answer: the worker was stopped in the middle of the batch; asked again, what it saved is skipped
+      var failed = r ? r.failed : urls;
+      var got = r ? r.warmed : 0;
+      if (!failed.length || tries >= 3) return { warmed: got, failed: failed, gone: gone };
+      return waitOnline().then(function () { return delay(1200 * (tries + 1)); }).then(function () { return saveBatch(failed, opts, tries + 1); })
+        .then(function (again) { return { warmed: got + again.warmed, failed: again.failed, gone: gone.concat(again.gone) }; });
+    });
+  }
+  /** Save every URL (the offline worker fetches and keeps each). Resolves {warmed, failed, gone, total}; `failed` lists
+   *  what could not be saved after three tries, `gone` what the server says it does not have (404: not a failure of
+   *  this Chromebook, and not expected on the drive). opts: readable (media on another site kept whole and seekable),
+   *  fresh (saved again even when kept), batch, lanes, each(done, total). */
+  function warm(urls, opts) {
+    opts = opts || {};
+    var seen = {}; var list = [];
+    (urls || []).forEach(function (u) { if (typeof u === 'string' && u && !seen[u]) { seen[u] = 1; list.push(u); } });
+    var out = { warmed: 0, failed: [], gone: [], total: list.length };
+    if (!list.length) return Promise.resolve(out);
+    var step = cur;
+    var size = opts.batch || 24, done = 0, batches = [];
+    for (var i = 0; i < list.length; i += size) batches.push(list.slice(i, i + size));
+    // What this step means to have on the drive: its list starts afresh each time the step runs (a book that left the
+    // shelf is no longer expected), unless the step keeps its own record and skips what it saved before (`resumes`).
+    var reset = !!(step && !step.resumes && !step.expected);
+    if (step) step.expected = true;
+    return ask({ type: 'expect', step: step ? step.id : 'other', urls: list, reset: reset }, 20000).then(function () {
+      return batches.reduce(function (p, b) {
+        return p.then(function () { return full ? { warmed: 0, failed: b } : saveBatch(b, opts, 0); }).then(function (r) {
+          out.warmed += r.warmed; out.failed = out.failed.concat(r.failed); out.gone = out.gone.concat(r.gone || []); done += b.length;
+          if (step) { step.files = (step.files || 0) + b.length - (r.gone || []).length; step.failed = (step.failed || 0) + r.failed.length; step.gone = (step.gone || 0) + (r.gone || []).length; }
+          if (opts.each) opts.each(done, list.length); else if (step === cur && step) { mark(step, 'run', (step.label || 'saving') + ': ' + done + ' of ' + list.length + ' files'); overall(done / list.length); }
+        });
+      }, Promise.resolve());
+    }).then(function () {
+      if (!out.gone.length) return out;
+      // named by a list but not on the server: said once, and not counted as something this Chromebook should hold
+      log((step ? step.name : 'files') + ': ' + out.gone.length + ' of ' + list.length + ' files are not on the server (e.g. ' + short(out.gone[0]) + ')');
+      return ask({ type: 'expect', step: step ? step.id : 'other', urls: out.gone, drop: true }, 20000).then(function () { return out; });
+    });
+  }
   function frame(src, ms) {
     return new Promise(function (ok) {
       var f = document.createElement('iframe'); f.className = 'warm'; f.src = src;
@@ -118,132 +268,422 @@
     });
   }
   function abs(u) { return new URL(u, location.origin).href; }
+  function text(u) { return fetch(u).then(function (r) { return r.text(); }); }
 
-  function run() {
-    $('ready').disabled = true;
-    var kid = null, games = [], loadReady = Promise.resolve();
-    setPct(3, 'Installing the offline worker…');
-    return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
-      if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
-      return fetch('/__cb/manifest').then(function (r) { return r.json(); });
-    }).then(function (m) {
-      // The school's class lists, kept for offline (only with this Chromebook's key).
-      if (m.roster && KEY) fetch('/__cb/roster?key=' + encodeURIComponent(KEY)).then(function (r) { log('class lists: ' + (r.ok ? 'saved' : 'refused (' + r.status + ')')); }, function () {});
-      var own = new URLSearchParams(location.search).get('hub');
-      if (own) m.hub = own; // a test rig uses its own child, so the Chromebook's link stays unopened
-      CFG = m;
-      // Each area's own Get-ready steps (ready/<name>.js) register themselves on window.CB_READY.
-      loadReady = Promise.all((m.ready || []).map(function (f) {
-        return new Promise(function (ok) { var s = document.createElement('script'); s.src = '/__cb/ready/' + f; s.onload = s.onerror = ok; document.head.appendChild(s); });
-      }));
-      // This Chromebook's child home, for Home buttons that must work offline (worker + every quiz page).
-      try { localStorage.setItem('cb-hub', m.hub); } catch (e) {}
-      if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'hub', hub: m.hub });
-      setPct(10, 'Saving Jugnu and its voices (' + m.static.length + ' files)…');
-      return warm(m.static.map(abs).concat([location.href]));
-    }).then(function (r) {
-      log('app + voices: ' + (r ? r.warmed : '?') + ' new files');
-      setPct(35, 'Opening the child home…');
-      return frame('/h/' + CFG.hub, 7000);
-    }).then(function (f) {
-      // What a child does: open the Games door (its list carries the game links and the child's id), then Stories.
-      var d = f.contentDocument;
-      var door = function (name) { var a = d.querySelector('a.wq-door[href="#' + name + '"]'); if (a) a.click(); return new Promise(function (ok) { setTimeout(ok, 3500); }); };
-      return door('games').then(function () {
-        var a = [].slice.call(d.querySelectorAll('a[href]')).map(function (x) { return x.getAttribute('href'); });
-        games = a.filter(function (h) { return /^\/(c|sa-game)\//.test(h); }).filter(function (h, i, all) { return all.indexOf(h) === i; });
-        kid = a.map(function (h) { var m = /[?&]kid=([0-9a-f]+)/.exec(h); return m && m[1]; }).filter(Boolean)[0] || null;
-        return door('stories');
-      }).then(function () { return f; });
-    }).then(function () {
-      log('child home saved; games: ' + games.length + (kid ? '' : ' (no child id found)'));
-      setPct(45, 'Saving the storybooks…');
-      return fetch('/api/wq/stories/shelf/h/' + CFG.hub + '?kid=' + (kid || '') + '&l=en').then(function (r) { return r.text(); });
-    }).then(function (shelf) {
-      var ids = []; var re = /"(?:id|book_id|bookId)":"([0-9a-f-]{36})"/g, m;
-      while ((m = re.exec(shelf))) if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
-      log('storybooks on the shelf: ' + ids.length);
-      return ids.slice(0, 12).reduce(function (p, id, i) {
-        return p.then(function () {
-          return fetch('/api/wq/stories/book/' + id + '/h/' + CFG.hub + '?kid=' + (kid || '')).then(function (r) { return r.text(); }).then(function (b) {
-            var files = []; var fr = /([a-z]{1,8}\d{0,3}-[0-9a-f]{8}\.(?:webp|ogg|mp3|jpg|json))/g, x;
-            while ((x = fr.exec(b))) if (files.indexOf(x[1]) < 0) files.push(x[1]);
-            setPct(45 + 25 * (i + 1) / Math.min(ids.length, 12));
-            return warm(files.map(function (f) { return abs('/s/' + id + '/' + f); }));
-          });
-        });
-      }, Promise.resolve());
-    }).then(function () {
-      setPct(72, 'Saving the quizzes…');
-      return CFG.quizzes.reduce(function (p, q) { return p.then(function () { return frame('/q/' + q, 6000); }); }, Promise.resolve());
-    }).then(function () {
-      setPct(85, 'Saving the number game and the reading game…');
-      return games.reduce(function (p, g) { return p.then(function () { return frame(g, 9000); }); }, Promise.resolve());
-    }).then(function () {
-      // The number game: its home and the exercise itself are GETs the game makes only when a child taps in.
-      var q = '?lang=en&kid=' + (kid || '');
-      var media = function (t) {
-        var out = [], re = /(https?:\/\/[^"'\s]+?\.(?:mp3|ogg|opus|webp|png|jpg)(?:\?[^"'\s]*)?|\/(?:wq|sa|s)\/[^"'\s]+?\.(?:mp3|ogg|opus|webp|png|jpg))/g, x;
-        while ((x = re.exec(t))) out.push(x[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/'));
-        return out;
+  /* ---------------- lesson videos: which classes ---------------- */
+  // The classes on this Chromebook's class list, else the home child's class. The home child's class and the picked
+  // child's class are ticked to begin with; a teacher ticks the others (each line says how big it is once known).
+  function videoGrades() {
+    var v = ls('cb-video-grades');
+    if (v === 'none') return [];
+    var all = lsJson('cb-video-all', []);
+    if (v === 'all') return all.slice();
+    if (v) return v.split(',').map(function (g) { return g.trim(); }).filter(Boolean);
+    var own = []; var hg = ls('cb-home-grade'); var c = child();
+    if (hg) own.push(String(hg));
+    if (c && c.grade && own.indexOf(String(c.grade)) < 0) own.push(String(c.grade));
+    return own;
+  }
+  function drawVideos() {
+    var all = lsJson('cb-video-all', []); var sizes = lsJson('cb-video-sizes', {}); var saved = lsJson('cb-videos', {});
+    if (!all.length) { $('vids').innerHTML = ''; return; }
+    var on = videoGrades();
+    $('vids').innerHTML = '<b>Lesson videos to save</b> <small>(large; tick the classes that use this Chromebook)</small><br>' + all.map(function (g) {
+      var s = sizes[g]; var d = saved[g];
+      return '<label><input type="checkbox" data-vg="' + esc(g) + '"' + (on.indexOf(String(g)) >= 0 ? ' checked' : '') + '> Class ' + esc(g) +
+        ' <small>' + (s ? s.n + ' lessons, ' + mb(s.mb * 1e6) : '') + (d && d.saved ? ' · ' + d.saved + ' saved' : '') + '</small></label>';
+    }).join('');
+    [].forEach.call($('vids').querySelectorAll('[data-vg]'), function (b) {
+      b.onchange = function () {
+        var picked = [].filter.call($('vids').querySelectorAll('[data-vg]'), function (x) { return x.checked; }).map(function (x) { return x.getAttribute('data-vg'); });
+        ls('cb-video-grades', picked.length ? picked.join(',') : 'none');
       };
-      var ch = games.some(function (g) { return /^\/c\//.test(g); });
-      return (ch ? Promise.all(['', '/numbers'].map(function (ex) {
-        return fetch('/api/wq/ch/' + CFG.hub + ex + q).then(function (r) { return r.text(); }).catch(function () { return ''; });
-      })).then(function (bodies) { return warm(media(bodies.join('\n')).map(abs)); }) : Promise.resolve(null)).then(function (r) {
-        log('number game: ' + (r ? r.warmed : 0) + ' clips/pictures');
-        setPct(92, 'Saving the reading game voices…');
+    });
+  }
+
+  /* ---------------- the built-in steps ---------------- */
+  /* This Chromebook's child home. The server signs each Chromebook its own link (it needs this Chromebook's key) and
+   * the offline worker keeps it fresh from then on; a link given by a test rig (?hub=) or, on a server that cannot
+   * sign, the configured one is used as it is. */
+  function home(m, own) {
+    var sw = navigator.serviceWorker.controller;
+    var use = function (hub, how) { m.hub = hub; ls('cb-hub', hub); return how; };
+    if (own) { sw.postMessage({ type: 'hub', hub: own, key: KEY, device: DEVICE }); return Promise.resolve(use(own, 'the test link given')); }
+    if (m.hub) sw.postMessage({ type: 'hub', hub: m.hub, key: KEY, device: DEVICE });
+    if (!m.signing || !KEY) return Promise.resolve(use(m.hub, m.signing ? 'the configured link (this Chromebook has no key yet)' : 'the configured link (this server cannot sign a fresh one)'));
+    return ask({ type: 'home', key: KEY, device: DEVICE, fresh: true }, 8000).then(function (h) {
+      if (h && h.hub && h.live) return use(h.hub, 'its own link, renewed by itself whenever it is online');
+      return use((h && h.hub) || m.hub, 'no fresh link could be had now; the last one is used');
+    });
+  }
+  function mediaIn(t) {
+    var out = [], re = /(https?:\/\/[^"'\s\\]+?\.(?:mp3|ogg|opus|webp|png|jpg)(?:\?[^"'\s\\]*)?|\/(?:wq|sa|s)\/[^"'\s\\]+?\.(?:mp3|ogg|opus|webp|png|jpg))/g, x;
+    t = String(t).replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+    while ((x = re.exec(t))) out.push(x[1]);
+    return out;
+  }
+  var BUILT_IN = [
+    { id: 'app', name: 'Jugnu and its voices', run: function () {
+      cur.label = 'Jugnu and its voices';
+      return warm(CFG.static.map(abs).concat([location.href, abs('/who'), abs('/cb/home'), abs('/__cb/boot.js')].concat((CFG.ready || []).map(function (f) { return abs('/__cb/ready/' + f); })))).then(function (r) { return r.total + ' files'; });
+    } },
+    { id: 'doors', name: 'Child home: Stories, Games, Videos', run: function () {
+      setPct(10, 'opening the child home…');
+      return frame('/h/' + CFG.hub, 7000).then(function (f) {
+        // What a child does: open the Games door (its list carries the game links and the child's id), then the others.
+        var d = f.contentDocument;
+        var door = function (name) { var a = d.querySelector('a.wq-door[href="#' + name + '"]'); if (a) a.click(); return delay(3500); };
+        return door('games').then(function () {
+          var a = [].slice.call(d.querySelectorAll('a[href]')).map(function (x) { return x.getAttribute('href'); });
+          run.ctx.games = a.filter(function (h) { return /^\/(c|sa-game)\//.test(h); }).filter(function (h, i, all) { return all.indexOf(h) === i; });
+          run.ctx.kid = a.map(function (h) { var m = /[?&]kid=([0-9a-f]+)/.exec(h); return m && m[1]; }).filter(Boolean)[0] || run.ctx.kid || null;
+          setPct(60, 'opening Stories and Videos…');
+          return door('stories');
+        }).then(function () { return door('videos'); }).then(function () {
+          if (!d.querySelector('a.wq-door')) throw new Error('the child home did not open');
+          ls('cb-kid', run.ctx.kid || '');
+          // the home's own install manifest (the browser asks for it only in a real tab, never in this hidden frame)
+          return warm([abs('/h/' + CFG.hub + '/manifest.webmanifest' + (run.ctx.kid ? '?kid=' + run.ctx.kid : ''))], { each: function () {} });
+        }).then(function () {
+          return (run.ctx.games || []).length + ' games found' + (run.ctx.kid ? '' : ' (no child id found)');
+        });
+      });
+    } },
+    { id: 'storybooks', name: 'Storybooks (first shelf)', run: function () {
+      var kid = run.ctx.kid || '';
+      cur.label = 'storybooks';
+      return text('/api/wq/stories/shelf/h/' + CFG.hub + '?kid=' + kid + '&l=en').then(function (shelf) {
+        var ids = []; var re = /"(?:id|book_id|bookId)":"([0-9a-f-]{36})"/g, m;
+        while ((m = re.exec(shelf))) if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
+        ids = ids.slice(0, 12);
+        var files = [];
+        return ids.reduce(function (p, id) {
+          return p.then(function () { return text('/api/wq/stories/book/' + id + '/h/' + CFG.hub + '?kid=' + kid); }).then(function (b) {
+            // A book's files are <stem>-<8 hex>.<ext>, and a stem may mix letters and digits (a question's option
+            // voice is q1o2-….ogg). The name is taken whole, from the quote or slash before it: the old pattern began
+            // anywhere, cut q1o2-… down to o2-…, and for weeks 126 option voices were asked for under names the
+            // server does not have (404) and never saved.
+            var fr = /(?:^|["'\/\\])([a-z][a-z0-9]{0,15}-[0-9a-f]{8}\.(?:webp|ogg|mp3|jpg|json))/g, x, own = [];
+            while ((x = fr.exec(b))) if (own.indexOf(x[1]) < 0) own.push(x[1]);
+            own.forEach(function (f) { files.push(abs('/s/' + id + '/' + f)); });
+          });
+        }, Promise.resolve()).then(function () { return warm(files); }).then(function (r) { return ids.length + ' books, ' + (r.total - r.gone.length) + ' files'; });
+      });
+    } },
+    { id: 'quizzes', name: 'Class quizzes', run: function () {
+      var qs = CFG.quizzes || []; var open = [], closed = [];
+      return qs.reduce(function (p, q, i) {
+        return p.then(function () {
+          setPct(100 * i / qs.length, 'quiz ' + (i + 1) + ' of ' + qs.length);
+          // Is the quiz still open? (asked the plain way: Jugnu's fast page says 200 before it knows)
+          return fetch('/q/' + q + '?nf=1', { cache: 'no-store' }).then(function (r) { return r.status; }, function () { return 0; });
+        }).then(function (status) {
+          if (status === 404 || status === 410) { closed.push(q); return null; }
+          if (status !== 200) throw new Error('quiz ' + q + ' did not open (' + (status || 'no answer') + ')');
+          open.push(q);
+          return frame('/q/' + q, 6000);
+        });
+      }, Promise.resolve()).then(function () { return warm(open.map(function (q) { return abs('/q/' + q); })); }).then(function () {
+        // A quiz its teacher has closed cannot be saved or played; it is named, and left off this Chromebook's list.
+        run.ctx.closed = closed;
+        if (closed.length) log('class quizzes: ' + closed.join(', ') + ' ' + (closed.length > 1 ? 'have' : 'has') + ' closed on the server: ask the teacher for a new quiz link');
+        return open.length + ' saved' + (closed.length ? '; ' + closed.join(', ') + ' closed' : '');
+      });
+    } },
+    { id: 'games', name: 'Number game and reading game', run: function () {
+      var games = run.ctx.games || []; var kid = run.ctx.kid || '';
+      return games.reduce(function (p, g, i) { return p.then(function () { setPct(60 * i / Math.max(1, games.length), 'game ' + (i + 1) + ' of ' + games.length); return frame(g, 9000); }); }, Promise.resolve()).then(function () {
+        // The number game: its home and the exercise itself are GETs the game makes only when a child taps in.
+        var q = '?lang=en&kid=' + kid;
+        var ch = games.some(function (g) { return /^\/c\//.test(g); });
+        cur.label = 'game clips and pictures';
+        return ch ? Promise.all(['', '/numbers'].map(function (ex) { return text('/api/wq/ch/' + CFG.hub + ex + q).catch(function () { return ''; }); }))
+          .then(function (bodies) { return warm(mediaIn(bodies.join('\n')).map(abs)); }) : null;
+      }).then(function () {
         // The reading game: both batteries and every clip they name (its own worker finds them in this page's saved copies).
         return Promise.all(['en', 'ur'].map(function (l) {
           var u = '/sa/batteries/sa.game.G1.' + l + '.json';
-          return fetch(u).then(function (r) { return r.text(); }).then(function (t) {
+          return text(u).then(function (t) {
             var keys = [], re = /"(sa\/[^"]+?\.mp3)"/g, x;
             while ((x = re.exec(t))) if (keys.indexOf(x[1]) < 0) keys.push(x[1]);
             return [abs(u)].concat(keys.map(function (k) { return abs('/' + k); }));
           }).catch(function () { return []; });
         }));
-      }).then(function (lists) { return warm([].concat.apply([], lists)); }).then(function (r) { log('reading game: ' + (r ? r.warmed : 0) + ' new clips'); });
-    }).then(function () {
-      return loadReady;
-    }).then(function () {
-      // Each step: {name, run(ctx)}; ctx gives the config, this child's ids, the games found and the helpers. A step
-      // that fails is logged and the rest still run.
-      var ctx = { cfg: CFG, hub: CFG.hub, kid: kid, games: games, key: KEY, log: log, warm: warm, frame: frame, abs: abs, ask: ask, setPct: setPct };
-      return (window.CB_READY || []).reduce(function (p, step) {
-        return p.then(function () { setPct(95, 'Saving ' + step.name + '…'); return Promise.resolve().then(function () { return step.run(ctx); }); })
-          .catch(function (e) { log(step.name + ': stopped (' + (e && e.message || e) + ')'); });
-      }, Promise.resolve());
-    }).then(function () {
-      setPct(100, 'Ready. Everything below now works on this Chromebook without Wi-Fi.');
-      $('step2').classList.remove('hidden');
-      showChild();
-      var links = [['Child home', 'Stories, games, videos', '/h/' + CFG.hub]].concat(CFG.quizzes.map(function (q, i) { return ['Quiz: ' + CFG.quizNames[i], 'Class quiz ' + q, '/q/' + q]; }));
-      games.forEach(function (g) { links.push([/sa-game/.test(g) ? 'Reading game' : 'Number game', /sa-game/.test(g) ? "Jugnu's big flight" : 'Numbers with Jugnu', g]); });
-      $('links').innerHTML = links.map(function (l) { return '<a href="' + l[2] + '">' + l[0] + '<small>' + l[1] + '</small></a>'; }).join('');
-      localStorage.setItem('cb-links', $('links').innerHTML);
-      document.querySelectorAll('iframe.warm').forEach(function (f) { f.remove(); });
-      status();
-    }).catch(function (e) { if (e !== 'reload') { log('stopped: ' + e); $('ready').disabled = false; } });
+      }).then(function (lists) { return warm([].concat.apply([], lists)); }).then(function (r) { return games.length + ' games, ' + r.total + ' clips'; });
+    } },
+  ];
+
+  function context() {
+    return { cfg: CFG, hub: CFG.hub, kid: run.ctx.kid || null, games: run.ctx.games || [], key: KEY, log: log, warm: warm, frame: frame, abs: abs, ask: ask, setPct: setPct,
+      // added by lane/home (ready/README.md): room on the drive, the classes whose videos to save, small helpers
+      space: space, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
   }
-  $('ready').onclick = run;
+  function runStep(s) {
+    cur = s; s.files = 0; s.failed = 0; s.gone = 0; s.within = 0; s.label = null; s.expected = false;
+    mark(s, 'run', 'working…');
+    if (!s.late) $('phase').textContent = s.name + '…';
+    return Promise.resolve().then(function () { return s.run(context()); }).then(function (note) {
+      if (full) throw new Error('this Chromebook has no room left');
+      if (s.failed) throw new Error(s.failed + ' files could not be saved');
+      run.done[s.id] = { at: Date.now(), files: s.files, note: typeof note === 'string' ? note : (note && note.note) || (s.files ? s.files + ' files' : '') };
+      saveRun(); mark(s, 'ok', run.done[s.id].note); overall(0);
+      return true;
+    }, function (e) {
+      var why = String(e && e.message || e);
+      mark(s, 'bad', why); log(s.name + ': stopped (' + why + ')');
+      return false;
+    }).then(function (ok) { cur = null; return ok; });
+  }
+  function seq(list) { return list.reduce(function (p, s) { return p.then(function (bad) { return run.done[s.id] ? bad : runStep(s).then(function (ok) { return ok ? bad : bad.concat([s]); }); }); }, Promise.resolve([])); }
+
+  function showLinks() {
+    $('step2').classList.remove('hidden');
+    var shut = run.ctx.closed || [];
+    var quizzes = (CFG.quizzes || []).map(function (q, i) { return { code: q, name: (CFG.quizNames || [])[i] || q }; }).filter(function (q) { return shut.indexOf(q.code) < 0; });
+    var links = [['Child home', 'Stories, games, videos', '/cb/home']].concat(quizzes.map(function (q) { return ['Quiz: ' + q.name, 'Class quiz ' + q.code, '/q/' + q.code]; }));
+    (run.ctx.games || []).forEach(function (g) { links.push([/sa-game/.test(g) ? 'Reading game' : 'Number game', /sa-game/.test(g) ? "Jugnu's big flight" : 'Numbers with Jugnu', g]); });
+    $('links').innerHTML = links.map(function (l) { return '<a href="' + esc(l[2]) + '">' + esc(l[0]) + '<small>' + esc(l[1]) + '</small></a>'; }).join('');
+    ls('cb-links', $('links').innerHTML);
+    // for Check this Chromebook, which must work with no network
+    ls('cb-quizzes', JSON.stringify(quizzes));
+    ls('cb-games', JSON.stringify(run.ctx.games || []));
+  }
+  function report(what) { fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(what) }).catch(function () {}); }
+
+  function getReady() {
+    $('ready').disabled = true; $('again').classList.add('hidden');
+    full = false;
+    run.running = true; run.started = run.started || Date.now(); saveRun();
+    $('phase').textContent = 'Installing the offline worker…';
+    var t0 = Date.now();
+    return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
+      if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
+      if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : 'not yet (the browser grants it to a site that is used or installed)')); }, function () {});
+      return waitOnline().then(function () { return fetch('/__cb/manifest', { cache: 'no-store' }); }).then(function (r) { return r.json(); });
+    }).then(function (m) {
+      // The school's class lists, kept for offline (only with this Chromebook's key).
+      if (m.roster && KEY) fetch('/__cb/roster?key=' + encodeURIComponent(KEY)).then(function (r) {
+        log('class lists: ' + (r.ok ? 'saved' : 'refused (' + r.status + ')'));
+        return r.ok ? r.json() : null;
+      }).then(function (r) {
+        if (!r) return;
+        var gs = []; (r.classes || []).forEach(function (c) { if (gs.indexOf(String(c.grade)) < 0) gs.push(String(c.grade)); });
+        if (gs.length) { ls('cb-video-all', JSON.stringify(gs)); drawVideos(); }
+      }, function () {});
+      var own = Q.get('hub'); // a test rig uses its own child, so the Chromebook's link stays unopened
+      CFG = m;
+      // Each area's own Get-ready steps (ready/<name>.js) register themselves on window.CB_READY.
+      return Promise.all((m.ready || []).map(function (f) {
+        return new Promise(function (ok) { if (document.querySelector('script[data-ready="' + f + '"]')) return ok(); var s = document.createElement('script'); s.src = '/__cb/ready/' + f; s.setAttribute('data-ready', f); s.onload = s.onerror = ok; document.head.appendChild(s); });
+      })).then(function () { return home(m, own); });
+    }).then(function (how) {
+      log('child home: ' + how);
+      steps = BUILT_IN.concat((window.CB_READY || []).map(function (s, i) { return { id: 'x-' + String(s.name || i).toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: s.name || 'step ' + (i + 1), run: s.run, late: !!s.late, resumes: !!s.resumes, check: s.check }; }));
+      drawSteps(); overall(0);
+      return seq(steps.filter(function (s) { return !s.late; }));
+    }).then(function (bad) {
+      // Ready only when the worker confirms every file each step set out to save is on this Chromebook.
+      return ask({ type: 'audit' }, 120000).then(function (a) {
+        var late = steps.filter(function (s) { return s.late; });
+        var lateIds = late.map(function (s) { return s.id; });
+        var miss = a ? a.steps.filter(function (s) { return s.missing && lateIds.indexOf(s.step) < 0; }) : [];
+        var secs = Math.round((Date.now() - t0) / 1000);
+        miss.forEach(function (s) { log('missing: ' + s.missing + ' of ' + s.total + ' files of "' + s.step + '", e.g. ' + short(s.sample[0])); delete run.done[s.step]; });
+        document.querySelectorAll('iframe.warm').forEach(function (f) { f.remove(); });
+        showLinks(); showChild();
+        if (bad.length || miss.length || !a) {
+          saveRun();
+          $('phase').textContent = 'Not ready yet: ' + (bad.concat(miss.map(function (s) { return { name: s.step }; }))).map(function (s) { return s.name; }).join(', ') + ' did not finish. Press Get ready again: it carries on from here.';
+          log('stopped: not everything was saved (' + secs + ' s)');
+          throw 'incomplete';
+        }
+        $('pct').style.width = '100%';
+        $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (late.length ? ' Still saving: ' + late.map(function (s) { return s.name; }).join(', ') + '.' : '');
+        log('ready in ' + secs + ' s: ' + a.total + ' files checked on the drive, 0 missing');
+        space().then(function (s) { report({ ready: { secs: secs, files: a.total, kept: a.kept, used_mb: Math.round(s.used / 1e6), free_mb: s.free == null ? null : Math.round(s.free / 1e6), persisted: s.safe, device: DEVICE } }); });
+        return seq(late).then(function (badLate) {
+          // the late steps are held to the same proof: every file they set out to save is on the drive
+          return ask({ type: 'audit' }, 180000).then(function (a2) {
+            late.forEach(function (s) {
+              var m = a2 && a2.steps.filter(function (x) { return x.step === s.id && x.missing; })[0];
+              if (!m || badLate.indexOf(s) >= 0) return;
+              delete run.done[s.id]; mark(s, 'bad', m.missing + ' of ' + m.total + ' files are not on this Chromebook');
+              log('missing: ' + m.missing + ' of ' + m.total + ' files of "' + s.name + '", e.g. ' + short(m.sample[0]));
+              badLate.push(s);
+            });
+            return badLate;
+          });
+        });
+      });
+    }).then(function (badLate) {
+      run.running = false; run.complete = !badLate.length; run.finished = Date.now(); saveRun();
+      $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (badLate.length ? ' Not finished: ' + badLate.map(function (s) { return s.name; }).join(', ') + ' (press Get ready again to carry on).' : '');
+      $('ready').disabled = false; $('ready').textContent = badLate.length ? 'Carry on' : 'Get ready again (checks for new things)';
+      $('again').classList.remove('hidden');
+      status();
+    }).catch(function (e) {
+      if (e === 'reload') return;
+      run.running = false; saveRun();
+      if (e !== 'incomplete') { log('stopped: ' + (e && e.message || e)); $('phase').textContent = 'Stopped: ' + (e && e.message || e) + '. Press Get ready again.'; }
+      $('ready').disabled = false; $('ready').textContent = 'Carry on';
+      $('again').classList.remove('hidden');
+      status();
+    });
+  }
+  $('ready').onclick = function () {
+    // A finished run pressed again looks for new things: every step runs again (what is already saved is skipped).
+    if (run.complete) { run = { v: 2, at: Date.now(), done: {}, ctx: run.ctx || {} }; saveRun(); $('log').textContent = ''; }
+    getReady();
+  };
+  $('again').onclick = function () { run = { v: 2, at: Date.now(), done: {}, ctx: {} }; saveRun(); $('log').textContent = ''; $('steps').innerHTML = ''; getReady(); };
   $('next').onclick = function () {
     Object.keys(localStorage).filter(function (k) { return /^wq_s_/.test(k); }).forEach(function (k) { localStorage.removeItem(k); });
-    try { localStorage.removeItem('cb-child'); } catch (e) {}
+    ls('cb-child', null);
     if (KEY) { location.href = '/who'; return; }
     $('next').textContent = 'Done: the next child starts fresh';
   };
+
+  /* ---------------- Check this Chromebook: every saved thing, opened from the saved copy alone ---------------- */
+  /* While an item is opened the offline worker reaches no network ("saved-only"), exactly as with the Wi-Fi off, and
+   * lists every file the page asked for that is not on the drive. A page passes when it shows what it should and
+   * nothing it asked for was missing. Nothing is sent or queued during the check. */
+  function savedOnly(on) { return ask({ type: 'saved-only', on: on, ms: 110000 }, 8000); }
+  var tester = {
+    /** Open a page from the saved copy alone. opts: see (a CSS selector that must appear), wait (ms to give it),
+     *  settle (ms the page is left after that, so everything it asks for is asked), not (RegExp the page must not say). */
+    open: function (name, url, opts) {
+      opts = opts || {};
+      return savedOnly(true).then(function (on) {
+        if (!on || !on.on) return { name: name, ok: false, why: 'the offline worker did not answer' };
+        return new Promise(function (ok) {
+          var f = document.createElement('iframe'); f.className = 'warm'; f.src = url; document.body.appendChild(f);
+          var t0 = Date.now(); var seenAt = 0;
+          var look = function () {
+            var d = null; try { d = f.contentDocument; } catch (e) { d = null; }
+            var seen = false; try { seen = !!(d && d.body && (!opts.see || d.querySelector(opts.see))); } catch (e) { seen = false; }
+            if (seen && !seenAt) seenAt = Date.now();
+            if ((seenAt && Date.now() - seenAt >= (opts.settle || 1200)) || Date.now() - t0 > (opts.wait || 10000)) {
+              var said = d && d.body ? d.body.innerText.replace(/\s+/g, ' ').slice(0, 200) : '';
+              f.remove();
+              return ok({ seen: !!seenAt, said: said });
+            }
+            setTimeout(look, 250);
+          };
+          setTimeout(look, 400);
+        }).then(function (r) {
+          return savedOnly(false).then(function (off) {
+            var misses = ((off && off.misses) || []).filter(function (m) { return m.why !== 'post_offline' && !/\/__cb\/(report|identity|added|home|manifest)\b/.test(m.u); });
+            var bad = opts.not && opts.not.test(r.said);
+            return { name: name, ok: r.seen && !misses.length && !bad, misses: misses.length,
+              why: !r.seen ? 'did not open' + (r.said ? ' (the page says: "' + r.said.slice(0, 80) + '")' : '') : bad ? 'the page says: "' + r.said.slice(0, 80) + '"' : misses.length ? misses.length + ' file' + (misses.length > 1 ? 's' : '') + ' missing, e.g. ' + short(misses[0].u) : '' };
+          });
+        });
+      });
+    },
+    /** A saved answer (JSON or text) read from the saved copy alone; null when it is not on this Chromebook. */
+    read: function (url) {
+      return savedOnly(true).then(function () { return fetch(url).then(function (r) { return r.ok && r.headers.get('X-CB-Offline') !== '1' ? r.text() : null; }, function () { return null; }); })
+        .then(function (t) { return savedOnly(false).then(function () { return t; }); });
+    },
+    /** Does a media file open from the saved copy (its length is read by a real player)? */
+    media: function (name, url, kind) {
+      return savedOnly(true).then(function () {
+        return new Promise(function (ok) {
+          var el = document.createElement(kind === 'audio' ? 'audio' : 'video'); el.preload = 'metadata'; el.muted = true;
+          var t = setTimeout(function () { ok({ ok: false, why: 'did not open in 15 s' }); }, 15000);
+          el.onloadedmetadata = function () { clearTimeout(t); ok({ ok: el.duration > 0, why: el.duration > 0 ? '' : 'no length', secs: Math.round(el.duration) }); };
+          el.onerror = function () { clearTimeout(t); ok({ ok: false, why: 'not on this Chromebook' }); };
+          el.src = url;
+        });
+      }).then(function (r) { return savedOnly(false).then(function () { return { name: name, ok: r.ok, why: r.why, secs: r.secs }; }); });
+    },
+    have: function (urls) { return ask({ type: 'have', urls: urls }, 60000); },
+    say: function (t) { $('test-now').textContent = t; },
+    hub: function () { return ls('cb-hub'); }, kid: function () { return ls('cb-kid') || ''; }, abs: abs, mediaIn: mediaIn, ls: ls, lsJson: lsJson,
+  };
+  function builtInChecks(t) {
+    var hub = t.hub(); var kid = t.kid(); var out = [];
+    var add = function (group) { return function (r) { r.group = group; out.push(r); return r; }; };
+    var each = function (list, fn) { return list.reduce(function (p, x, i) { return p.then(function () { return fn(x, i); }); }, Promise.resolve()); };
+    if (!hub) return Promise.resolve([{ group: 'Child home', name: 'child home', ok: false, why: 'this Chromebook has no child home yet: press Get ready' }]);
+    t.say('the child home…');
+    var DOOR = { stories: '.wqs-book', games: '.wq-drow', videos: '.wq-vcard, .wq-row' }; // what each door lists when it has opened
+    return t.open('Start page', '/cb?stay=1', { see: '#ready' }).then(add('Start'))
+      .then(function () { return KEY ? t.open("Who's playing? (class lists)", '/who', { see: 'button.tile', wait: 7000 }).then(add('Start')) : null; })
+      .then(function () { return t.open('Child home', '/cb/home', { see: 'a.wq-door', settle: 2500, not: /expired|another player|not saved/i }).then(add('Child home')); })
+      .then(function () {
+        return each(['stories', 'games', 'videos'], function (d) {
+          t.say('the ' + d + ' door…');
+          return t.open(d.charAt(0).toUpperCase() + d.slice(1) + ' door', '/cb/home#' + d, { see: '#wq[data-m="H3-' + d + '"][data-fetch="done"] ' + DOOR[d].split(', ').join(', #wq[data-m="H3-' + d + '"][data-fetch="done"] '), settle: 2500, not: /could not open|did not load|not saved on this device/i }).then(add('Child home'));
+        });
+      })
+      .then(function () { return each(lsJson('cb-quizzes', []), function (q, i) { t.say('quiz ' + (i + 1) + '…'); return t.open('Quiz ' + q.name, '/q/' + q.code, { see: '#wq[data-m]', not: /not saved on this device/i }).then(add('Quizzes')); }); })
+      .then(function () { return each(lsJson('cb-games', []), function (g, i) { t.say('game ' + (i + 1) + '…'); return t.open(/sa-game/.test(g) ? 'Reading game' : 'Number game', g, { see: 'button, a, canvas', settle: 3500, not: /not saved on this device/i }).then(add('Games')); }); })
+      .then(function () {
+        // Every storybook on the saved shelf is opened. (An area whose own step brings a check, ready/stories.js, checks
+        // its own books; these are then left to it.)
+        if ((window.CB_READY || []).some(function (s) { return /stor/i.test(s.name || '') && typeof s.check === 'function'; })) return null;
+        return t.read('/api/wq/stories/shelf/h/' + hub + '?kid=' + kid + '&l=en').then(function (shelf) {
+          if (!shelf) return add('Stories')({ name: 'storybook shelf', ok: false, why: 'the shelf is not saved' });
+          var books = []; var re = /"(?:id|book_id|bookId)":"([0-9a-f-]{36})"[^{}]*?"title":"([^"]{0,80})"/g, m;
+          while ((m = re.exec(shelf))) if (!books.some(function (b) { return b.id === m[1]; })) books.push({ id: m[1], title: m[2] });
+          if (!books.length) { var re2 = /"(?:id|book_id|bookId)":"([0-9a-f-]{36})"/g; while ((m = re2.exec(shelf))) if (!books.some(function (b) { return b.id === m[1]; })) books.push({ id: m[1], title: 'book ' + (books.length + 1) }); }
+          return each(books, function (b, i) {
+            t.say('story ' + (i + 1) + ' of ' + books.length + '…');
+            return t.open('Story: ' + b.title, '/cb/home#story/' + b.id, { see: '.wqs .wqs-stage img, .wqs .wqra-pic', settle: 2200, not: /could not open|did not load|not saved on this device/i }).then(add('Stories'));
+          });
+        });
+      })
+      .then(function () { return out; });
+  }
+  function selfTest() {
+    $('test').disabled = true; $('test-out').innerHTML = '';
+    var t0 = Date.now();
+    var all = [];
+    // a step's own check (ready/<name>.js: check(tester) -> [{name, ok, why}]) runs after the built-in ones
+    var load = fetch('/__cb/manifest').then(function (r) { return r.json(); }).catch(function () { return { ready: lsJson('cb-ready-files', []) }; }).then(function (m) {
+      ls('cb-ready-files', JSON.stringify(m.ready || []));
+      return Promise.all((m.ready || []).map(function (f) { return new Promise(function (ok) { if (document.querySelector('script[data-ready="' + f + '"]')) return ok(); var s = document.createElement('script'); s.src = '/__cb/ready/' + f; s.setAttribute('data-ready', f); s.onload = s.onerror = ok; document.head.appendChild(s); }); }));
+    });
+    return load.then(function () { return ask({ type: 'audit' }, 180000); }).then(function (a) {
+      if (!a) { all.push({ group: 'Files', name: 'offline worker', ok: false, why: 'not installed: press Get ready first' }); return null; }
+      a.steps.forEach(function (s) { all.push({ group: 'Files', name: s.step.replace(/^x-/, '') + ': ' + s.total + ' files', ok: !s.missing, why: s.missing ? s.missing + ' not on this Chromebook, e.g. ' + short(s.sample[0]) : '' }); });
+      return builtInChecks(tester).then(function (rows) { all = all.concat(rows); });
+    }).then(function () {
+      return (window.CB_READY || []).filter(function (s) { return typeof s.check === 'function'; }).reduce(function (p, s) {
+        return p.then(function () { tester.say(s.name + '…'); return Promise.resolve().then(function () { return s.check(tester); }); }).then(function (rows) {
+          (rows || []).forEach(function (r) { r.group = r.group || s.name.charAt(0).toUpperCase() + s.name.slice(1); all.push(r); });
+        }, function (e) { all.push({ group: s.name, name: s.name + ' check', ok: false, why: 'the check itself failed: ' + (e && e.message || e) }); });
+      }, Promise.resolve());
+    }).then(function () { return savedOnly(false); }).then(function () {
+      var bad = all.filter(function (r) { return !r.ok; });
+      var groups = []; all.forEach(function (r) { if (groups.indexOf(r.group) < 0) groups.push(r.group); });
+      var secs = Math.round((Date.now() - t0) / 1000);
+      tester.say('');
+      $('test-out').innerHTML = '<p class="' + (bad.length ? 'bad' : 'ok') + '" id="test-result">' + (bad.length ? bad.length + ' of ' + all.length + ' did not open from this Chromebook alone.' : 'All ' + all.length + ' opened from this Chromebook alone. It is ready to be used without Wi-Fi.') + ' <small>(' + secs + ' s' + (navigator.onLine ? '; for the strictest check, switch the Wi-Fi off and run it again' : '; Wi-Fi was off') + ')</small></p>' +
+        groups.map(function (g) {
+          var rows = all.filter(function (r) { return r.group === g; }); var b = rows.filter(function (r) { return !r.ok; });
+          return '<div><b>' + esc(g) + '</b>: ' + (rows.length - b.length) + ' of ' + rows.length + ' fine' + (b.length ? '<ul>' + b.slice(0, 40).map(function (r) { return '<li>' + esc(r.name) + ': ' + esc(r.why || 'did not open') + '</li>'; }).join('') + (b.length > 40 ? '<li>… and ' + (b.length - 40) + ' more</li>' : '') + '</ul>' : '') + '</div>';
+        }).join('');
+      ls('cb-test', JSON.stringify({ at: Date.now(), total: all.length, bad: bad.length }));
+      report({ selftest: { device: DEVICE, secs: secs, total: all.length, bad: bad.length, online: navigator.onLine, failed: bad.slice(0, 60).map(function (r) { return r.group + ' / ' + r.name + ': ' + r.why; }) } });
+      $('test').disabled = false;
+      return { total: all.length, bad: bad };
+    }).catch(function (e) { savedOnly(false); $('test-out').innerHTML = '<p class="bad">The check stopped: ' + esc(e && e.message || e) + '</p>'; $('test').disabled = false; });
+  }
+  $('test').onclick = selfTest;
+  window.__cbSelfTest = selfTest;
+
   // Device facts for the full-library question: free space for this site, and the voices this Chromebook speaks
   // (localService = works without internet). Sent once per page open.
   (function deviceCheck() {
     var send = function (voices) {
-      Promise.resolve(navigator.storage && navigator.storage.estimate ? navigator.storage.estimate() : {}).then(function (est) {
-        return Promise.resolve(navigator.storage && navigator.storage.persisted ? navigator.storage.persisted() : null).then(function (p) {
-          fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: {
-            quota_gb: est.quota ? Math.round(est.quota / 1e8) / 10 : null, used_mb: est.usage ? Math.round(est.usage / 1e6) : null, persisted: p,
-            memory_gb: navigator.deviceMemory || null, cores: navigator.hardwareConcurrency || null, online: navigator.onLine,
-            voices: (voices || []).map(function (v) { return v.lang + (v.localService ? ' (offline)' : ' (online)') + ' ' + v.name; }),
-            speech_recognition: !!(window.SpeechRecognition || window.webkitSpeechRecognition) } }) }).catch(function () {});
-        });
+      space().then(function (s) {
+        report({ device: {
+          quota_gb: s.quota ? Math.round(s.quota / 1e8) / 10 : null, used_mb: Math.round(s.used / 1e6), persisted: s.safe,
+          memory_gb: navigator.deviceMemory || null, cores: navigator.hardwareConcurrency || null, online: navigator.onLine,
+          voices: (voices || []).map(function (v) { return v.lang + (v.localService ? ' (offline)' : ' (online)') + ' ' + v.name; }),
+          speech_recognition: !!(window.SpeechRecognition || window.webkitSpeechRecognition) } });
       });
     };
     var ss = window.speechSynthesis;
@@ -254,11 +694,19 @@
     ss.addEventListener('voiceschanged', function () { if (!done) { done = true; send(ss.getVoices()); } });
     setTimeout(function () { if (!done) { done = true; send(ss.getVoices()); } }, 3000);
   }());
-  var saved = localStorage.getItem('cb-links');
-  if (saved) { $('links').innerHTML = saved; $('step2').classList.remove('hidden'); }
-  showChild();
-  if (sessionStorage.getItem('cb-continue')) { sessionStorage.removeItem('cb-continue'); run(); }
-  status();
+
+  var saved = ls('cb-links');
+  if (saved) { $('links').innerHTML = saved.replace(/href="\/h\/[^"]+"/, 'href="/cb/home"'); $('step2').classList.remove('hidden'); }
+  drawVideos(); showChild(); status();
+  // The worker learns this Chromebook's key and id as soon as this page opens (not only at Get ready), so the child
+  // home is renewed from the first moment there is a network; and who was just picked on Who's playing? (this page
+  // is where a pick lands), so the very next Home is that child's.
+  if (KEY) ask({ type: 'home', key: KEY, device: DEVICE, who: (child() && child().student_id) || null }, 8000).then(function (h) { if (h && h.hub) ls('cb-hub', h.hub); });
+  if (run.complete) { $('phase').textContent = 'Ready. Everything below works on this Chromebook without Wi-Fi.'; $('ready').textContent = 'Get ready again (checks for new things)'; $('pct').style.width = '100%'; $('again').classList.remove('hidden'); }
+  else if (Object.keys(run.done).length) { $('phase').textContent = 'Get ready was stopped part-way. Press the button: it carries on from where it was.'; $('ready').textContent = 'Carry on'; $('again').classList.remove('hidden'); }
+  // The page was reloaded to put the worker in charge, or the Chromebook was closed while Get ready was running: carry on.
+  if (sessionStorage.getItem('cb-continue')) { sessionStorage.removeItem('cb-continue'); getReady(); }
+  else if (run.running && navigator.onLine && !Q.get('stay')) { log('Get ready was interrupted; carrying on.'); getReady(); }
 }());
 </script>
 </body>
