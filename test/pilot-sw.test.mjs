@@ -302,3 +302,20 @@ test("the child's battery page with no network is the one kept copy (the newest)
   const res = await sw.get('/sa/play.html?s=tomorrows-session&form=sa.game.G1.en&block=maths');
   assert.equal(await res.text(), '<html>new</html>');
 });
+
+// ---- games lane: a recording's upload. The storage bucket takes a PUT only from Jugnu's own site (CORS), and the
+// pilot is another site, so the browser refuses it; the worker sends it through the pilot's own server instead. ----
+const R2 = 'https://bucket.abc123.r2.cloudflarestorage.com/child-voice/sandbox/kept/run/read-1.webm?X-Amz-Signature=sig';
+
+test("a page's upload of a recording to the storage bucket goes through the pilot's server, not straight to the bucket", async () => {
+  const seen = [];
+  const sw = load({ source, fetch: (req, body) => { seen.push({ url: req.url, method: req.method, type: req.headers.get('content-type'), body }); return new Response('', { status: 200 }); } });
+  const res = sw.put(R2, 'VOICE', { 'content-type': 'audio/webm' });
+  assert.ok(res, 'the worker takes the upload');
+  assert.equal((await res).status, 200);
+  assert.equal(seen.length, 1);
+  const u = new URL(seen[0].url);
+  assert.equal(u.origin + u.pathname, 'http://pilot.test/__cb/r2put');
+  assert.equal(u.searchParams.get('u'), R2);
+  assert.deepEqual([seen[0].method, seen[0].type, seen[0].body], ['PUT', 'audio/webm', 'VOICE']);
+});

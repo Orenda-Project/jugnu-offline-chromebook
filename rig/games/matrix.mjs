@@ -72,9 +72,9 @@ async function challenge(k, off) {
   const rows = (await doorRows(k.page, k).catch((e) => { k.say('Games door did not open: ' + e.message.split('\n')[0]); return []; })).filter((r) => r.href && /^\/c\//.test(r.href));
   if (!rows.length) k.out.challenge.push({ name: '(none found behind the Games door)', ok: false });
   for (const r of rows) {
-    const g = await playGame(k.page, { href: r.href, lang: k.lang, say: k.say, tag: `mx-${k.key}-${String(r.item).replace(/\W/g, '_')}${off ? '-off' : ''}`, maxMs: 6 * 60000 });
+    const g = await playGame(k.page, { href: r.href, lang: k.lang, say: k.say, mic: k.mic, tag: `mx-${k.key}-${String(r.item).replace(/\W/g, '_')}${off ? '-off' : ''}`, maxMs: 6 * 60000 });
     const row = { name: r.name, kind: r.kind, item: r.item, ended: g.ended, end: (g.endText || '').slice(0, 100), screens: g.screens, posts: g.posts, sounds: `${g.media.played}/${g.media.tried}`, sound_failures: g.media.failed, cut: g.cut, scrolls: g.scrolls,
-      anomalies: g.anomalies, lang: g.last && g.last.lang, dir: g.last && g.last.dir, seconds: Math.round(g.ms / 1000), ok: g.ended && !g.anomalies.length };
+      anomalies: g.anomalies, spoke: g.spoke || null, lang: g.last && g.last.lang, dir: g.last && g.last.dir, seconds: Math.round(g.ms / 1000), ok: g.ended && !g.anomalies.length };
     k.out.challenge.push(row);
     k.say(`  ${row.ok ? 'OK  ' : 'FAIL'} ${r.name} [${r.kind}:${r.item}]: ${g.screens.join('>')} · sent ${g.posts.join(' ') || 'nothing'} · sounds ${row.sounds} · cut ${g.cut.length}${g.anomalies.length ? ' · ' + g.anomalies.join(' | ') : ''}`);
     save(k);

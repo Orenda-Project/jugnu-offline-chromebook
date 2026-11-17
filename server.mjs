@@ -167,6 +167,27 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // games lane: a child's recording on its way to Jugnu's storage bucket. The bucket's CORS rule takes a browser's
+  // PUT only from Jugnu's own site, so a page served by this pilot cannot upload; the offline worker sends the PUT
+  // here and it is passed on as it came (the signed address is Jugnu's own; only that bucket's host is accepted).
+  if (url.pathname === '/__cb/r2put' && req.method === 'PUT') {
+    let target = null;
+    try { target = new URL(url.searchParams.get('u') || ''); } catch (e) { target = null; }
+    if (!target || target.protocol !== 'https:' || !/\.r2\.cloudflarestorage\.com$/.test(target.hostname)) {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'not_a_storage_address' }));
+      return;
+    }
+    const headers = { 'content-type': req.headers['content-type'] || 'application/octet-stream' };
+    if (req.headers['content-length']) headers['content-length'] = req.headers['content-length'];
+    const out = https.request({ hostname: target.hostname, port: 443, path: target.pathname + target.search, method: 'PUT', headers }, (r2) => {
+      r2.resume();
+      r2.on('end', () => { res.writeHead(r2.statusCode).end(); log({ m: 'PUT', p: '/__cb/r2put', s: r2.statusCode, bytes: Number(headers['content-length'] || 0), local: true, ua }); });
+    });
+    out.on('error', (e) => { if (!res.headersSent) res.writeHead(502).end(); log({ m: 'PUT', p: '/__cb/r2put', s: 502, err: e.message, ua }); });
+    req.pipe(out);
+    return;
+  }
+
   const local = LOCAL[url.pathname];
   if (local && req.method === 'GET') {
     res.writeHead(200, { 'content-type': local[1], 'cache-control': 'no-cache', 'service-worker-allowed': '/' });

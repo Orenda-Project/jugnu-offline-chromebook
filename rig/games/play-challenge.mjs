@@ -12,7 +12,7 @@ const [who, only] = args.filter((a) => !a.startsWith('--'));
 const kid = children()[who];
 if (!kid) { console.error('no such child: ' + who); process.exit(1); }
 const off = !!flag('offline', false);
-const { ctx, page, log } = await launch({ wav: path.join(ROOT, 'logs/speech', `${kid.lang}.wav`) });
+const { ctx, page, log, mic } = await launch({ wav: path.join(ROOT, 'logs/speech', `${kid.lang}.wav`) });
 const say = (s) => console.log(s);
 let bad = 0;
 try {
@@ -23,9 +23,10 @@ try {
   if (!rows.length) { say('no Challenge games found behind the Games door'); bad += 1; }
   for (const r of rows) {
     const name = `${r.name} [${r.kind}:${r.item}]`;
-    const g = await playGame(page, { href: r.href, lang: kid.lang, say, trace: !!flag('trace', false), keys: !!flag('keys', false), tag: `ch-${who}-${String(r.item).replace(/\W/g, '_')}${off ? '-off' : ''}`, maxMs: Number(flag('max', 6)) * 60000 });
+    const g = await playGame(page, { href: r.href, lang: kid.lang, say, trace: !!flag('trace', false), keys: !!flag('keys', false), mic, tag: `ch-${who}-${String(r.item).replace(/\W/g, '_')}${off ? '-off' : ''}`, maxMs: Number(flag('max', 6)) * 60000 });
     say(`${g.ended && !g.anomalies.length ? 'OK  ' : 'FAIL'} ${name}: ${g.screens.join(' > ')}`);
     say(`     end: ${g.ended ? `"${(g.endText || '').slice(0, 110)}"` : 'not reached'} · lang=${g.last && g.last.lang} dir=${g.last && g.last.dir} · sounds ${g.media.played}/${g.media.tried}${g.media.failed.length ? ' FAILED ' + g.media.failed.join(', ') : ''} · ${Math.round(g.ms / 1000)} s`);
+    if (g.spoke) say(`     the rig read aloud with Jugnu's own reading of this passage (${g.spoke})`);
     say(`     sent: ${g.posts.join('  ') || 'nothing'} · cut off by the page: ${g.cut.length ? g.cut.join(' ; ') : 'nothing'}${g.scrolls ? ' · scrolls needed: ' + g.scrolls : ''}`);
     if (!g.ended || g.anomalies.length) bad += 1;
   }

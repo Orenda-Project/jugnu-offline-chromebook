@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import pw from 'playwright-core';
 
 const { chromium } = pw;
@@ -21,7 +22,15 @@ fs.mkdirSync(SHOTS, { recursive: true });
 
 export async function launch({ wav = null, profile = path.join(ROOT, '.chrome-profile') } = {}) {
   const args = ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
-  if (wav) args.push(`--use-file-for-fake-audio-capture=${wav}`);
+  // The microphone is a WAV of this profile's own (logs/speech/mic-<profile>.wav), started as a copy of `wav`: the rig
+  // can put other speech in it before a reading (speakClip), and Chrome reads the file when a recording opens.
+  let mic = null;
+  if (wav) {
+    mic = path.join(ROOT, 'logs', 'speech', `mic-${path.basename(profile).replace(/[^A-Za-z0-9.-]/g, '_')}.wav`);
+    fs.mkdirSync(path.dirname(mic), { recursive: true });
+    fs.copyFileSync(wav, mic);
+    args.push(`--use-file-for-fake-audio-capture=${mic}`);
+  }
   const ctx = await chromium.launchPersistentContext(profile, {
     channel: 'chrome', headless: !process.env.CB_HEADED, viewport: { width: 1366, height: 633 }, userAgent: UA,
     locale: 'en-PK', permissions: ['microphone'], args,
@@ -32,7 +41,7 @@ export async function launch({ wav = null, profile = path.join(ROOT, '.chrome-pr
     const orig = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function () {
       // .src first: a pooled <audio> given a new src still reports the old currentSrc until it loads
-      const r = { src: String(this.src || this.currentSrc || '').split('?')[0].slice(-60), ok: null, at: Date.now() };
+      const r = { src: String(this.src || this.currentSrc || '').split('?')[0].slice(-60), full: String(this.src || this.currentSrc || ''), ok: null, at: Date.now() };
       rec.push(r);
       const p = orig.apply(this, arguments);
       if (p && p.then) p.then(() => { r.ok = true; }, (e) => { r.ok = (e && e.name) || 'error'; });
@@ -45,7 +54,22 @@ export async function launch({ wav = null, profile = path.join(ROOT, '.chrome-pr
   page.on('pageerror', (e) => log.push(`[pageerror] ${e.message}`.slice(0, 300)));
   page.on('requestfailed', (r) => log.push(`[failed] ${r.method()} ${r.url().replace(/[A-Za-z0-9_-]{60,}\.[A-Za-z0-9_-]{16,}/, '<hub>').slice(0, 160)} ${r.failure() && r.failure().errorText}`));
   page.on('response', (r) => { if (r.status() >= 400) log.push(`[http ${r.status()}] ${r.request().method()} ${r.url().replace(/[A-Za-z0-9_-]{60,}\.[A-Za-z0-9_-]{16,}/, '<hub>').slice(0, 160)}`); });
-  return { ctx, page, log };
+  return { ctx, page, log, mic };
+}
+
+/**
+ * The child "reads" what Jugnu just read: a clip the page played (its signed address, as the page had it) becomes
+ * this profile's microphone. Jugnu's own reading of a passage is the one voice sure to say that passage's words, in
+ * English and in Urdu (the Mac has no Urdu voice). Needs ffmpeg. → true when the microphone now holds the clip.
+ */
+export function speakClip(mic, url) {
+  if (!mic || !url) return false;
+  try {
+    const tmp = mic.replace(/\.wav$/, '.next.wav');
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', url, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', tmp], { timeout: 60000 });
+    fs.renameSync(tmp, mic);
+    return true;
+  } catch (e) { return false; }
 }
 
 export async function offline(ctx, on) {

@@ -448,9 +448,20 @@ function gHead(req) {
 }
 
 /** The games lane's requests; true when one was answered here. */
+/* A recording's upload. Jugnu gives the page a signed address on its storage bucket and the page PUTs the recording
+ * there; the bucket accepts that only from Jugnu's own site (its CORS rule answers 403 to any other origin), and the
+ * pilot is another site, so the browser stops the upload. The pilot's server passes it on instead (/__cb/r2put). */
+var G_BUCKET = /\.r2\.cloudflarestorage\.com$/;
+function gPutAway(url, type, body) {
+  return fetch('/__cb/r2put?u=' + encodeURIComponent(url), { method: 'PUT', headers: { 'content-type': type || 'application/octet-stream' }, body: body });
+}
 function gamesFetch(e) {
   var req = e.request;
   var u = new URL(req.url);
+  if (req.method === 'PUT' && G_BUCKET.test(u.hostname)) {
+    e.respondWith(req.arrayBuffer().then(function (buf) { return gPutAway(req.url, req.headers.get('content-type'), buf); }).then(null, function () { return new Response('', { status: 503 }); }));
+    return true;
+  }
   if (u.origin !== self.location.origin) return false;
   if (req.method === 'HEAD') { e.respondWith(gHead(req)); return true; }
   // The sea map is kept per child and language only: back from a part its address also carries done= and s=, and a
@@ -625,7 +636,9 @@ function gChSendRead(q, put) {
           if (up.status >= 500) return false;
           if (!up.ok) { q.state = 'refused_' + up.status; return put(q); }
           return up.json().then(function (u) {
-            return fetch(u.put_url, { method: 'PUT', headers: { 'content-type': u.content_type || row.type }, body: row.bytes }).then(function (pr) {
+            var up2 = G_BUCKET.test(new URL(u.put_url).hostname) ? gPutAway(u.put_url, u.content_type || row.type, row.bytes)
+              : fetch(u.put_url, { method: 'PUT', headers: { 'content-type': u.content_type || row.type }, body: row.bytes });
+            return up2.then(function (pr) {
               if (!pr.ok) return false;
               var b = {}; for (var k2 in q.body) if (Object.prototype.hasOwnProperty.call(q.body, k2)) b[k2] = q.body[k2];
               b.ct = fresh.ct; b.key = u.key;

@@ -3,7 +3,7 @@
 // Every screen is the page's own (section.wq-screen[data-screen]); the rig clicks what a child would, with the mouse.
 //
 //   playGame(page, { href, lang, say, trace, speakMs, maxMs, tag }) -> { screens: [...], end, posts: [...], media, anomalies }
-import { shot, media, BASE } from './lib.mjs';
+import { shot, media, speakClip, BASE } from './lib.mjs';
 
 const UD = '۰۱۲۳۴۵۶۷۸۹';
 const western = (s) => String(s).replace(/[۰-۹]/g, (d) => String(UD.indexOf(d)));
@@ -24,12 +24,15 @@ const look = (page) => page.evaluate(() => {
 }).catch(() => null);
 
 export async function playGame(page, opts = {}) {
-  const o = { lang: 'en', say: () => {}, trace: false, speakMs: 12000, maxMs: 6 * 60 * 1000, tag: 'ch', keys: false, ...opts };
+  const o = { lang: 'en', say: () => {}, trace: false, speakMs: 48000, maxMs: 6 * 60 * 1000, tag: 'ch', keys: false, mic: null, ...opts };
   const report = { screens: [], anomalies: [], posts: [], cut: [], scrolls: 0 };
   const anomaly = (a) => { if (!report.anomalies.includes(a)) { report.anomalies.push(a); o.say(`   ! ${a}`); } };
-  const onReq = (r) => { if (/\/api\/wq\/ch\//.test(r.url()) && r.method() === 'POST') report.posts.push({ p: new URL(r.url()).pathname.replace('/api/wq/', ''), status: null, r }); };
-  const onRes = async (res) => { const hit = report.posts.find((x) => x.r === res.request()); if (hit) { hit.status = res.status(); hit.local = res.headers()['x-cb-local'] === '1'; } };
-  page.on('request', onReq); page.on('response', onRes);
+  // every call the game makes (its answers, a recording's upload): what was asked and what came back
+  const isCall = (r) => (/\/api\/wq\/ch\//.test(r.url()) && r.method() === 'POST') || (r.method() === 'PUT' && /r2\.cloudflarestorage|\/__cb\/(ch-audio|r2put)/.test(r.url()));
+  const nameOf = (r) => (r.method() === 'PUT' ? 'PUT-recording' : new URL(r.url()).pathname.replace('/api/wq/', ''));
+  const onRes = (res) => { const r = res.request(); if (isCall(r)) report.posts.push({ p: nameOf(r), status: res.status(), local: res.headers()['x-cb-local'] === '1' }); };
+  const onFail = (r) => { if (isCall(r)) report.posts.push({ p: nameOf(r), status: 'FAILED ' + ((r.failure() && r.failure().errorText) || '') }); };
+  page.on('response', onRes); page.on('requestfailed', onFail);
   const t0 = Date.now();
   await page.goto(BASE + o.href, { waitUntil: 'load', timeout: 45000 }).catch((e) => anomaly('the page did not load: ' + e.message.split('\n')[0]));
   let lastKey = '', lastChange = Date.now(), readStart = 0, listenStart = 0, n = 0, ended = false;
@@ -56,6 +59,11 @@ export async function playGame(page, opts = {}) {
       }
     }
     if (Date.now() - lastChange > 60000) { anomaly(`stuck 60 s on "${s.screen}": ${s.text}`); await shot(page, `${o.tag}-stuck`); break; }
+    // Jugnu has read the story out (read along / "hear it from me first"): that reading becomes the child's voice
+    if (o.mic && !report.spoke) {
+      const clip = await page.evaluate(() => ((window.__cbMedia || []).filter((m) => /\/readalong\//.test(m.full)).pop() || {}).full || null).catch(() => null);
+      if (clip) { report.spoke = speakClip(o.mic, clip) ? clip.split('?')[0].split('/').slice(-2).join('/') : 'could not be made'; }
+    }
     report.last = { screen: s.screen, text: s.text, lang: s.lang, dir: s.dir, font: s.font };
 
     // the end of a game: its card (never a number), with Home / the next thing
@@ -102,6 +110,8 @@ export async function playGame(page, opts = {}) {
       // reading aloud: the rig's microphone speaks; when the child has read for a while, Done/Stop if the page has one
       if (!readStart) readStart = Date.now();
       const stop = by('wqc-stop') || by('wqc-done') || by('wqc-stop-yes') || by('wqc-rf');
+      // a child reads the passage through: the page ends the reading itself (the last word, or its minute); Done only
+      // if it is still open long after (a reading ended under 15 s is 'abandoned' to the scorer, not a reading)
       if (stop && Date.now() - readStart > o.speakMs) { readStart = 0; await click(stop); }
     } else {
       const next = by('wqc-next') || by('wqc-again') && null || on.find((x) => /wq-go/.test(x.cls) && !/wqc-menu|wq-home/.test(x.id));
@@ -109,11 +119,24 @@ export async function playGame(page, opts = {}) {
     }
     await page.waitForTimeout(260);
   }
-  page.off('request', onReq); page.off('response', onRes);
+  // a reading goes up after its card is drawn (the page uploads the recording, then posts the result): a child stays
+  // on the card that long, so the rig does too, before it leaves the page
+  if (ended && report.screens.some((x) => /^read-live/.test(String(x)))) {
+    const u0 = Date.now();
+    while (!report.posts.some((x) => x.p === 'ch/upload') && Date.now() - u0 < 25000) await page.waitForTimeout(500);
+  }
+  if (ended && report.posts.some((x) => x.p === 'ch/upload')) {
+    const settled = () => { const i = report.posts.map((x) => x.p).lastIndexOf('ch/upload'); return report.posts.slice(i + 1).some((x) => x.p === 'ch/result'); };
+    const w0 = Date.now();
+    while (!settled() && Date.now() - w0 < 60000) await page.waitForTimeout(500);
+    if (!settled()) anomaly('the reading was recorded but its result was never posted (60 s on the card)');
+    else await page.waitForTimeout(800);
+  }
+  page.off('response', onRes); page.off('requestfailed', onFail);
   if (!ended && !report.anomalies.length) anomaly(`did not reach an end card in ${Math.round(o.maxMs / 60000)} min (last screen "${report.last && report.last.screen}")`);
   const m = await media(page);
   report.media = { tried: m.length, played: m.filter((x) => x.ok === true).length, failed: [...new Set(m.filter((x) => x.ok !== true && x.ok !== null).map((x) => `${x.src.split('/').slice(-2).join('/')} (${x.ok})`))].slice(0, 8) };
-  report.posts = report.posts.map((x) => `${x.p.replace(/eyJ[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{16,}/, '<hub>')}=${x.status == null ? 'no answer' : x.status}${x.local ? '(device)' : ''}`);
+  report.posts = report.posts.map((x) => `${x.p.replace(/eyJ[A-Za-z0-9_-]{40,}\.[A-Za-z0-9_-]{16,}/, '<hub>')}=${x.status}${x.local ? '(device)' : ''}`);
   report.ended = ended;
   report.ms = Date.now() - t0;
   return report;
