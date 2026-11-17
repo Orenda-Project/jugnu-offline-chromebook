@@ -498,10 +498,30 @@ test('waiting taps go to the run they were played in and say when they were play
   assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
 });
 
-test('the run already has its result (409): the waiting taps are done, and are not sent to another run', async () => {
-  const posts = [];
+test('a result that reached the server but whose answer was lost: the next try is told "already done" (409) and is done, not sent to another run', async () => {
+  const posts = []; let lost = true;
   const sw = load({ source, fetch: (req, body) => {
     if (req.method === 'GET') return serve('ct-fresh');   // the same questions: a second result would count twice
+    if (new URL(req.url).pathname !== '/api/wq/ch/result') return json({});
+    const b = JSON.parse(body); posts.push(b.ct);
+    if (lost) { lost = false; throw new TypeError('network changed'); }   // the server took it; the answer never came back
+    return b.ct === 'ct-kept' ? json({ error: 'already_done' }, 409) : json({ score: { correct: 2, n: 3, stopped: false } });
+  } });
+  await sw.kept(EX, serve('ct-kept'));
+  sw.net.down = true;
+  await sw.post('/api/wq/ch/result', TAPS);
+  sw.net.down = false;
+  await sw.message({ type: 'report' }); await tick(30);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['waiting']);
+  await sw.message({ type: 'report' }); await tick(30);
+  assert.deepEqual(posts, ['ct-kept', 'ct-kept']);
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('"already done" (409) on the FIRST try: that run was played before, so this play goes to a fresh run of the same questions', async () => {
+  const posts = [];
+  const sw = load({ source, fetch: (req, body) => {
+    if (req.method === 'GET') return serve('ct-fresh');
     if (new URL(req.url).pathname !== '/api/wq/ch/result') return json({});
     const b = JSON.parse(body); posts.push(b.ct);
     return b.ct === 'ct-kept' ? json({ error: 'already_done' }, 409) : json({ score: { correct: 2, n: 3, stopped: false } });
@@ -510,9 +530,33 @@ test('the run already has its result (409): the waiting taps are done, and are n
   sw.net.down = true;
   await sw.post('/api/wq/ch/result', TAPS);
   sw.net.down = false;
-  await sw.message({ type: 'report' });
+  await sw.message({ type: 'report' }); await tick(30);
+  assert.deepEqual(posts, ['ct-kept', 'ct-fresh']);
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('a game played ONLINE uses up the run kept for no network: a new run is kept at once, and a play of the old one is never sent to it', async () => {
+  let n = 0; const posts = [];
+  const sw = load({ source, fetch: (req, body) => {
+    const u = new URL(req.url);
+    if (req.method === 'GET' && u.pathname.startsWith('/api/wq/ch/')) { n += 1; return serve('ct-' + n); }
+    if (u.pathname !== '/api/wq/ch/result') return json({});
+    const b = JSON.parse(body); posts.push(b.ct);
+    return json({ score: { correct: 2, n: 3, stopped: false } });   // (a real server would answer 409 for ct-1 the second time)
+  } });
+  await sw.kept(EX, serve('ct-1'));
+  // the child plays online, from the kept run's page: the result goes straight up
+  await sw.post('/api/wq/ch/result', { ...TAPS, ct: 'ct-1' }, { referer: 'http://pilot.test/c/tok.sig?kid=a1b2c3d4e5f60718&lang=en' });
   await tick(30);
-  assert.deepEqual(posts, ['ct-kept']);
+  assert.equal((await (await sw.get(EX)).json()).ct !== 'ct-1', true, 'the game kept for no network is a new run');
+  // a page still open on the old run plays it again with no network
+  sw.net.down = true;
+  await sw.kept(EX, serve('ct-1'));   // (that page's copy)
+  await sw.post('/api/wq/ch/result', { ...TAPS, ct: 'ct-1' });
+  sw.net.down = false; posts.length = 0;
+  await sw.message({ type: 'report' }); await tick(30);
+  assert.equal(posts.length, 1);
+  assert.notEqual(posts[0], 'ct-1', 'not to the run already played');
   assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
 });
 
@@ -671,4 +715,98 @@ test('a Listen answer the server refuses (not a lapsed token) is not dropped: th
   sw.net.down = false;
   await sw.message({ type: 'report' }); await tick(60);
   assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => [w.ex, w.state, w.answers]), [['listen', 'refused_400', 3]]);
+});
+
+// ---- games lane: Listen is kept by story, and the run kept for no network is left unplayed on the server ----
+test('a story this Chromebook already knows: Get ready asks for a run and asks nothing OF it (no questions, no answers)', async () => {
+  const srv = listenServer();
+  const sw = load({ source, fetch: srv.fetch });
+  const first = await sw.message({ type: 'listen-prepare', url: LISTEN });
+  assert.deepEqual([first.ok, first.probed], [true, true]);
+  srv.calls.length = 0;
+  const again = await sw.message({ type: 'listen-prepare', url: LISTEN });
+  assert.deepEqual([again.ok, again.questions, again.probed], [true, 3, false]);
+  assert.deepEqual(srv.calls.map((c) => c.split(' ')[1].split('/').pop()), ['listen'], 'one run asked for; no ch/qs and no ch/qa');
+  // and that run, never asked anything online, still opens its questions with no network
+  sw.net.down = true;
+  const s = await (await sw.get(LISTEN)).json();
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: s.ct, lang: 'en' })).json();
+  assert.equal(qs.questions.length, 3);
+  const a = await (await sw.post('/api/wq/ch/qa', { ct: s.ct, q: 'q.1', pick: qs.questions[0].options.indexOf(RIGHT['q.1']), lang: 'en' })).json();
+  assert.deepEqual([a.ok, a.answer], [true, RIGHT['q.1']]);
+});
+
+test('back online, the run is first asked for ITS order of choices (saying it is late) and each answer goes by the words chosen', async () => {
+  const asks = [];
+  const srv = listenServer();
+  const sw = load({ source, fetch: (req, body) => { const u = new URL(req.url); if (u.pathname === '/api/wq/ch/qs') asks.push(JSON.parse(body)); return srv.fetch(req, body); } });
+  await sw.message({ type: 'listen-prepare', url: LISTEN });
+  sw.net.down = true;
+  const s = await (await sw.get(LISTEN)).json();
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: s.ct, lang: 'en' })).json();
+  const picks = { 'q.1': RIGHT['q.1'], 'q.2': WRONG['q.2'][1], 'q.3': RIGHT['q.3'] };
+  for (const q of qs.questions) await sw.post('/api/wq/ch/qa', { ct: s.ct, q: q.id, pick: q.options.indexOf(picks[q.id]), lang: 'en' });
+  sw.net.down = false; srv.answered.length = 0; asks.length = 0;
+  await sw.message({ type: 'report' }); await tick(60);
+  assert.equal(asks[0].ct, s.ct);
+  assert.equal(typeof asks[0].late.at, 'number');
+  // the kept questions were in another run's order; the server heard the words the child chose
+  assert.deepEqual(srv.answered.filter((x) => x[0] === s.ct).map((x) => [x[1], x[2]]).sort(), Object.keys(picks).map((id) => [id, picks[id]]).sort());
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('a Listen run played ONLINE is used up: a new run is kept for no network', async () => {
+  const srv = listenServer();
+  const sw = load({ source, fetch: srv.fetch });
+  await sw.message({ type: 'listen-prepare', url: LISTEN });
+  const s = await (await sw.get(LISTEN)).json();                       // online: the page gets the game (a new run)
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: s.ct, lang: 'en' })).json();
+  for (const q of qs.questions) await sw.post('/api/wq/ch/qa', { ct: s.ct, q: q.id, pick: 0, lang: 'en' });
+  await tick(60);
+  sw.net.down = true;
+  const kept = await (await sw.get(LISTEN)).json();
+  assert.notEqual(kept.ct, s.ct, 'the game kept for no network is not the run just played');
+  assert.equal((await (await sw.post('/api/wq/ch/qs', { ct: kept.ct, lang: 'en' })).json()).questions.length, 3);
+});
+
+test('the network dropped before a new Listen run could be kept: answers given with no network on the played run go to a fresh run, never to it', async () => {
+  const srv = listenServer();
+  const sw = load({ source, fetch: srv.fetch });
+  await sw.message({ type: 'listen-prepare', url: LISTEN });
+  const s = await (await sw.get(LISTEN)).json();
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: s.ct, lang: 'en' })).json();
+  for (const q of qs.questions.slice(0, 2)) await sw.post('/api/wq/ch/qa', { ct: s.ct, q: q.id, pick: 0, lang: 'en' });
+  await tick(20);
+  sw.net.down = true;                                                   // the last answer never left; the kept game is still this run
+  const again = await (await sw.get(LISTEN)).json();
+  assert.equal(again.ct, s.ct);
+  for (const q of qs.questions) await sw.post('/api/wq/ch/qa', { ct: s.ct, q: q.id, pick: q.options.indexOf(RIGHT[q.id]), lang: 'en' });
+  sw.net.down = false; srv.answered.length = 0;
+  await sw.message({ type: 'report' }); await tick(80);
+  assert.equal(srv.answered.length, 3);
+  assert.ok(srv.answered.every((x) => x[0] !== s.ct), 'none to the run already played in part');
+  assert.deepEqual(srv.answered.map((x) => x[2]).sort(), Object.values(RIGHT).sort());
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('the server judged another answer than the one sent (the run had its answers already): the play goes to a fresh run', async () => {
+  let kept = null;
+  const srv = listenServer();
+  const sw = load({ source, fetch: (req, body) => {
+    const u = new URL(req.url); const b = body ? JSON.parse(body) : {};
+    // that run was answered before (all wrong): whatever is sent now, it says what it kept
+    if (u.pathname === '/api/wq/ch/qa' && b.ct === kept) return json({ ok: false, answer: RIGHT[b.q] });
+    return srv.fetch(req, body);
+  } });
+  await sw.message({ type: 'listen-prepare', url: LISTEN });
+  sw.net.down = true;
+  const s = await (await sw.get(LISTEN)).json();
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: s.ct, lang: 'en' })).json();
+  for (const q of qs.questions) await sw.post('/api/wq/ch/qa', { ct: s.ct, q: q.id, pick: q.options.indexOf(RIGHT[q.id]), lang: 'en' });
+  kept = s.ct;
+  sw.net.down = false; srv.answered.length = 0;
+  await sw.message({ type: 'report' }); await tick(80);
+  assert.equal(srv.answered.length, 3, 'all three answers reached a run that took them');
+  assert.ok(srv.answered.every((x) => x[0] !== kept));
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
 });

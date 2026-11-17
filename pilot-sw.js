@@ -1061,6 +1061,25 @@ var G_LATE_MAX_MS = 45 * 24 * 60 * 60 * 1000;   // how old a run may be for Jugn
 var G_AGAIN_MS = 12 * 60 * 60 * 1000;           // a result the server would not take is offered again this often
 var G_FULL_MS = 6 * 60 * 60 * 1000;             // the day's readings are used up (429): tried again after this
 var gCh = function (mode, fn) { return grec('ch', mode, fn); };
+/* A run already played. The game kept for no network is one run. When that run is played ONLINE (the page sends its
+ * result straight to the server), the kept copy is a finished run: a play of it with no network afterwards must not
+ * be sent to it (the server would say "already done", or quietly keep its first answers). So a run whose result went
+ * up from this device is noted, the kept game is asked for again at once, and a waiting result of a noted run goes
+ * to a fresh run of the same questions. */
+var G_USED = new URL('/__cb/ch-used', self.location.origin).toString();
+function gUsedAll() { return caches.open(KEEP).then(function (c) { return c.match(G_USED); }).then(function (r) { return r ? r.json() : {}; }).then(null, function () { return {}; }); }
+/** Note that this run got a result (or an answer) from this device while online -> how many so far. */
+function gUsedMark(ct, why) {
+  if (!ct) return Promise.resolve(0);
+  return gUsedAll().then(function (u) {
+    var e = u[ct] || { n: 0, why: why, at: Date.now() };
+    e.n += 1; e.at = Date.now(); u[ct] = e;
+    var keys = Object.keys(u).sort(function (x, y) { return u[y].at - u[x].at; }).slice(0, 300);   // the newest 300 runs
+    var keepOnly = {}; keys.forEach(function (k) { keepOnly[k] = u[k]; });
+    return caches.open(KEEP).then(function (c) { return c.put(G_USED, new Response(JSON.stringify(keepOnly), { headers: { 'Content-Type': 'application/json' } })); }).then(function () { return e.n; });
+  }).then(null, function () { return 0; });
+}
+function gUsedHas(ct) { return gUsedAll().then(function (u) { return !!(ct && u[ct]); }); }
 /** A copy of a waiting result's body that says it is late: when the child finished, by this device. */
 function gLate(body, q) { var b = {}; for (var k in body) if (Object.prototype.hasOwnProperty.call(body, k)) b[k] = body[k]; b.late = { at: q.at }; return b; }
 /** Is this waiting result to be sent now? waiting: yes, unless it was told to wait; not taken before: twice a day. */
@@ -1126,7 +1145,15 @@ function gChResult(req) {
     return fetch(req.clone()).then(function (res) {
       // a dropped upstream (5xx), or a token that lapsed while the page was open with no network (401): as no network
       if (res.status >= 500 || res.status === 401) return later(res);
-      if (res.ok) gChSend();
+      if (res.ok) {
+        gChSend();
+        // this run is played: the game kept for no network becomes a new run of it ("a run already played")
+        if (body.ct) gUsedMark(body.ct, 'result').then(function () { return gChServeOf(body.ct); }).then(function (hit) {
+          if (!hit || gListenStory(hit.url)) return null;
+          var at = gChAddress(hit.url, req);
+          return gLive(at).then(function (u) { return fetch(u, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (nx) { return nx.ok ? keep(at, nx) : null; });
+        }).then(null, function () {});
+      }
       return res;
     }, function () { return later(null); });
   });
@@ -1203,9 +1230,16 @@ function gChSendRead(q, put) {
   };
   return gAudio('readonly', function (st) { return st.get(q.audio); }).then(function (row) {
     if (!row || !row.bytes) { q.state = 'recording_missing'; return put(q); }
-    return send(row, q.body.ct, { at: q.at }).then(function (st) {
+    var again = (q.tried || 0) > 0;   // sent before, with no answer back: it may have arrived
+    return gUsedHas(q.body.ct).then(function (used) {
+      if (used) return 'lapsed';   // a run already played online: not the run for this reading
+      q.tried = (q.tried || 0) + 1;
+      return put(q).then(function () { return send(row, q.body.ct, { at: q.at }); });
+    }).then(function (st) {
+      // "already done": after an earlier try of ours it is this very reading; on a first try the run was played before
+      if (st === 'done' && !again) st = 'lapsed';
       if (st !== 'lapsed') return settle(st);
-      // the server takes no late result for that run: a fresh serve, and only of the same story
+      // that run will not take it: a fresh serve, and only of the same story
       return gLive(q.url).then(function (url) { return fetch(url, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
         if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
         return res.clone().json().then(function (fresh) {
@@ -1243,12 +1277,18 @@ function gChSendTaps(q, put) {
       });
     }, function () { return false; });
   };
-  return post(gLate(q.body, q)).then(function (first) {
-    if (first.status >= 500) return false;
-    if (first.ok) return sent(false);
-    if (first.status === 409) return sent(true);   // that run already has its result: nothing more to send for it
-    return fresh();
-  }, function () { return false; });
+  return gUsedHas(q.body.ct).then(function (used) {
+    if (used) return fresh();   // a run already played online: not the run for this play
+    var again = (q.tried || 0) > 0;   // sent before, with no answer back: it may have arrived
+    q.tried = (q.tried || 0) + 1;
+    return put(q).then(function () { return post(gLate(q.body, q)); }).then(function (first) {
+      if (first.status >= 500) return false;
+      if (first.ok) return sent(false);
+      // "already done": after an earlier try of ours it is this very result; on a first try the run was played before
+      if (first.status === 409) return again ? sent(true) : fresh();
+      return fresh();
+    }, function () { return false; });
+  });
 }
 var gChSending = null;
 function gChSend() {
@@ -1285,29 +1325,53 @@ self.addEventListener('message', function (e) {
 });
 /* ---- games lane: Listen (a story, then questions about it) with no network ----
  * The story is a clip and plays from the device. Its questions are not in the game's page: after the story the page
- * asks the server for them (POST ch/qs {ct}: three questions, each with three choices in an order of that run's
- * own), and every answer is checked there (POST ch/qa {ct, q, pick} -> {ok, answer: the right choice's words}).
- * So with no network Listen stopped after the story ("Something went wrong").
- *   Get ready (message listen-prepare {url}): the game is asked for, and its questions; when the right choices of
- *     those questions are not known on this device yet, that one run is answered to learn them (ch/qa says the right
- *     words: one practice run per story per Chromebook, never a record), and a new run is asked for and kept in its
- *     place with its questions.
- *   no network: ch/qs is answered with the kept run's questions; ch/qa from the right words kept; the answers wait.
- *   back online: they go to the run they were given in; when its token has lapsed (two hours), a fresh run of the
- *     same story is asked for and each answer goes to it by the WORDS chosen (a run's order of choices is its own).
- *     The story is named by its id, so there is always the same story to send to. */
+ * asks the server for them (POST ch/qs {ct}: three questions, each with the same three choices for every run of that
+ * story, in an order of that run's own), and every answer is checked there (POST ch/qa {ct, q, pick} -> {ok,
+ * answer: the right choice's words}). So with no network Listen stopped after the story ("Something went wrong").
+ *
+ * What is kept is kept BY STORY (its id and language), not by run: a story's questions with their choices, and the
+ * right choice of each question.
+ *   Get ready (message listen-prepare {url}): a story this Chromebook does not know yet is asked its questions and
+ *     that one run is answered (first choice each) to learn the right ones: one practice run per story per
+ *     Chromebook, never a record. Then, and for a story already known at once, a run is asked for and kept as it
+ *     is: nothing is asked of it, so on the server it is a run served and not yet played (not one left half-way).
+ *   no network: ch/qs is answered with the story's kept questions; ch/qa from the right words kept; the answers wait.
+ *   back online: the run they were given in is asked for ITS order of choices (ch/qs, saying it is late: Jugnu takes
+ *     that for a lapsed run, see "A LATE result") and each answer goes to it by the WORDS chosen. When that run will
+ *     not do (401: no late results there; or it was already played, see "a run already played"), a fresh run of the
+ *     same story takes them, the same way. */
 var G_RIGHTS = new URL('/__cb/listen-rights', self.location.origin).toString();
 function gLqKey(ct) { return new URL('/__cb/listen-qs?ct=' + encodeURIComponent(ct), self.location.origin).toString(); }
+function gLsKey(pid, lang) { return new URL('/__cb/listen-story?pid=' + encodeURIComponent(pid) + '&lang=' + encodeURIComponent(lang || ''), self.location.origin).toString(); }
+/** The story a Listen game's address names: {pid, lang}, or null. */
+function gListenStory(url) { try { var u = new URL(url, self.location.origin); var pid = u.searchParams.get('pid'); return pid ? { pid: pid, lang: u.searchParams.get('lang') || '' } : null; } catch (e) { return null; } }
 function gJsonKept(key) { return caches.open(KEEP).then(function (c) { return c.match(key); }).then(function (r) { return r ? r.json() : null; }).then(null, function () { return null; }); }
 function gJsonKeep(key, v) { return caches.open(KEEP).then(function (c) { return c.put(key, new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json' } })); }).then(null, function () {}); }
 function gChPost(path, b) { return fetch('/api/wq/ch/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }); }
+/** The kept questions of the story the run `ct` is of (by the kept game it came from). */
+function gListenStoryOf(ct) {
+  return gChServeOf(ct).then(function (hit) { var st = hit ? gListenStory(hit.url) : null; return st ? gJsonKept(gLsKey(st.pid, st.lang)).then(function (q) { return { st: st, q: q, url: hit.url }; }) : { st: null, q: null, url: hit ? hit.url : null }; });
+}
 function gListenQs(req) {
   return req.clone().text().then(function (t) {
     var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) { body = {}; }
-    var kept = function (res) { return gJsonKept(gLqKey(body.ct)).then(function (q) { return q && q.questions ? json({ questions: q.questions, offline: true }) : (res || json({ ok: false, offline: true }, 503)); }); };
+    var kept = function (res) {
+      return gJsonKept(gLqKey(body.ct)).then(function (own) {
+        if (own && own.questions) return json({ questions: own.questions, offline: true });
+        return gListenStoryOf(body.ct).then(function (s) {
+          if (!s.q || !s.q.questions) return res || json({ ok: false, offline: true }, 503);
+          // this run's answers will be words of the story's kept set
+          return gJsonKeep(gLqKey(body.ct), { questions: s.q.questions }).then(function () { return json({ questions: s.q.questions, offline: true }); });
+        });
+      });
+    };
     return fetch(req.clone()).then(function (res) {
       if (res.status >= 500 || res.status === 401) return kept(res);
-      if (res.ok && body.ct) res.clone().json().then(function (j) { if (j && j.questions && j.questions.some(function (q) { return q.options; })) gJsonKeep(gLqKey(body.ct), { questions: j.questions }); }, function () {});
+      if (res.ok && body.ct) res.clone().json().then(function (j) {
+        if (!j || !j.questions || !j.questions.some(function (q) { return q.options; })) return null;
+        // this run's own questions, and the story's when it is met for the first time
+        return gJsonKeep(gLqKey(body.ct), { questions: j.questions }).then(function () { return gListenStoryOf(body.ct); }).then(function (s) { return s.st && !s.q ? gJsonKeep(gLsKey(s.st.pid, s.st.lang), { questions: j.questions }) : null; });
+      }).then(null, function () {});
       return res;
     }, function () { return kept(null); });
   });
@@ -1324,8 +1388,8 @@ function gListenQa(req) {
         return gChServeOf(body.ct).then(function (hit) {
           return gChWaiting().then(function (list) {
             var e = list.filter(function (x) { return x.kind === 'listen' && x.ct === body.ct && x.state === 'waiting'; })[0]
-              || { kind: 'listen', ex: 'listen', ct: body.ct, url: hit ? gChAddress(hit.url, req) : null, answers: [], body: { taps: [] }, state: 'waiting', at: Date.now() };
-            if (!e.answers.some(function (a) { return a.q === body.q; })) { e.answers.push({ q: body.q, text: text, body: body }); e.body.taps.push(body.q); }
+              || { kind: 'listen', ex: 'listen', ct: body.ct, lang: body.lang || null, url: hit ? gChAddress(hit.url, req) : null, answers: [], body: { taps: [] }, state: 'waiting', at: Date.now() };
+            if (!e.answers.some(function (a) { return a.q === body.q; })) { e.answers.push({ q: body.q, text: text, ok: text === right, body: body }); e.body.taps.push(body.q); }
             return gCh('readwrite', function (st) { st.put(e); return null; });
           });
         }).then(function () { return json({ ok: text === right, answer: right, offline: true }); });
@@ -1333,8 +1397,14 @@ function gListenQa(req) {
     };
     return fetch(req.clone()).then(function (res) {
       if (res.status >= 500 || res.status === 401) return here(res);
-      // what the server says is the right choice is kept: the next time this question is met with no network
-      if (res.ok && body.q) res.clone().json().then(function (j) { if (j && typeof j.answer === 'string') gJsonKept(G_RIGHTS).then(function (r) { r = r || {}; r[body.q] = j.answer; return gJsonKeep(G_RIGHTS, r); }); }, function () {});
+      if (res.ok && body.q) {
+        // what the server says is the right choice is kept: the next time this question is met with no network
+        res.clone().json().then(function (j) { if (j && typeof j.answer === 'string') return gJsonKept(G_RIGHTS).then(function (r) { r = r || {}; r[body.q] = j.answer; return gJsonKeep(G_RIGHTS, r); }); return null; }).then(null, function () {});
+        // this run is being played online: once every question is answered, the game kept for no network is a new run
+        gUsedMark(body.ct, 'listen').then(function (n) {
+          return gJsonKept(gLqKey(body.ct)).then(function (own) { return own && own.questions && n >= own.questions.length ? gChServeOf(body.ct) : null; });
+        }).then(function (hit) { return hit && gListenStory(hit.url) ? gListenPrepare(hit.url) : null; }).then(null, function () {});
+      }
       return res;
     }, function () { return here(null); });
   });
@@ -1342,28 +1412,32 @@ function gListenQa(req) {
 /** Get ready for one Listen story (its game address) -> {ok, questions, probed, media}. */
 function gListenPrepare(url) {
   var abs = new URL(url, self.location.origin).toString();
+  var story = gListenStory(abs);
   var serve = function () { return gLive(abs).then(function (u) { return fetch(u, { cache: 'no-store', headers: { accept: 'application/json' } }); }); };
   var asked = function (ct, lang) { return gChPost('qs', { ct: ct, lang: lang }).then(function (r) { return r.ok ? r.json() : null; }); };
   var media = function (j, q) { var m = []; if (j.story_clip && j.story_clip.url) m.push(j.story_clip.url); ((q && q.questions) || []).forEach(function (x) { if (x.clip && x.clip.url) m.push(x.clip.url); (x.option_clips || []).forEach(function (o) { if (o && o.url) m.push(o.url); }); }); return m; };
-  var keepRun = function (res, j, q) { return keep(abs, res).then(function () { return gJsonKeep(gLqKey(j.ct), { questions: q.questions }); }).then(function () { return { ok: true, questions: q.questions.length, media: media(j, q) }; }); };
-  return serve().then(function (res) {
-    if (!res.ok) return { ok: false, why: 'serve_' + res.status };
-    return res.clone().json().then(function (j) {
-      if (!j.ct) return { ok: false, why: 'no_run' };
-      return asked(j.ct, j.lang).then(function (q) {
-        if (!q || !q.questions || !q.questions.length) return { ok: false, why: 'no_questions' };
-        return gJsonKept(G_RIGHTS).then(function (rights) {
-          rights = rights || {};
+  var known = function (q, rights) { return !!q && !!q.questions && q.questions.length > 0 && q.questions.every(function (x) { return rights[x.id] != null; }); };
+  // a run kept as it is: nothing is asked of it
+  var keepRun = function (res, j, q, probed) { return keep(abs, res).then(function () { return { ok: true, questions: q.questions.length, probed: probed, media: media(j, q) }; }); };
+  if (!story) return Promise.resolve({ ok: false, why: 'no_story' });
+  return Promise.all([gJsonKept(gLsKey(story.pid, story.lang)), gJsonKept(G_RIGHTS)]).then(function (v) {
+    var q0 = v[0]; var rights = v[1] || {};
+    return serve().then(function (res) {
+      if (!res.ok) return { ok: false, why: 'serve_' + res.status };
+      return res.clone().json().then(function (j) {
+        if (!j.ct) return { ok: false, why: 'no_run' };
+        if (known(q0, rights)) return keepRun(res, j, q0, false);
+        // a story this Chromebook does not know: this run is asked its questions and answered, to learn the right words
+        return asked(j.ct, j.lang).then(function (q) {
+          if (!q || !q.questions || !q.questions.length) return { ok: false, why: 'no_questions' };
           var unknown = q.questions.filter(function (x) { return rights[x.id] == null; });
-          if (!unknown.length) return keepRun(res, j, q).then(function (o) { o.probed = false; return o; });
-          // learn the right words: this run is answered (first choice each), then another is kept in its place
           return unknown.reduce(function (p, x) {
             return p.then(function () { return gChPost('qa', { ct: j.ct, q: x.id, pick: 0, lang: j.lang }); }).then(function (r) { return r.ok ? r.json() : null; }).then(function (a) { if (a && typeof a.answer === 'string') rights[x.id] = a.answer; });
           }, Promise.resolve()).then(function () { return gJsonKeep(G_RIGHTS, rights); }).then(function () {
-            if (q.questions.some(function (x) { return rights[x.id] == null; })) return { ok: false, why: 'right_answers_unknown' };
-            return serve().then(function (res2) {
+            if (!known(q, rights)) return { ok: false, why: 'right_answers_unknown' };
+            return gJsonKeep(gLsKey(story.pid, story.lang), { questions: q.questions }).then(serve).then(function (res2) {
               if (!res2.ok) return { ok: false, why: 'serve_' + res2.status };
-              return res2.clone().json().then(function (j2) { return asked(j2.ct, j2.lang).then(function (q2) { return q2 && q2.questions ? keepRun(res2, j2, q2).then(function (o) { o.probed = true; return o; }) : { ok: false, why: 'no_questions' }; }); });
+              return res2.clone().json().then(function (j2) { return j2.ct ? keepRun(res2, j2, q, true) : { ok: false, why: 'no_run' }; });
             });
           });
         });
@@ -1374,40 +1448,59 @@ function gListenPrepare(url) {
 /** One waiting Listen play, sent. false = no network yet. */
 function gChSendListen(q, put) {
   var done = function () { return gCh('readwrite', function (st) { st.delete(q.id); return null; }).then(function () { return q.url ? gListenPrepare(q.url) : null; }).then(function () { return true; }); };
-  var sendAll = function (ct, pickOf, late) {
-    return q.answers.reduce(function (p, a) {
-      return p.then(function (st) {
-        if (st !== 'ok') return st;
-        var b = {}; for (var k in a.body) if (Object.prototype.hasOwnProperty.call(a.body, k)) b[k] = a.body[k];
-        b.ct = ct; b.pick = pickOf(a);
-        if (late) b.late = { at: q.at };
-        if (b.pick < 0) return 'ok'; // a choice the fresh run does not offer: nothing honest to send for it
-        // an answer the server refuses for another reason is not dropped: the play stays in the outbox and says why
-        return gChPost('qa', b).then(function (r) { return r.ok ? 'ok' : r.status >= 500 ? 'down' : r.status === 401 ? 'lapsed' : 'refused_' + r.status; }, function () { return 'down'; });
+  /** Every answer to the run `ct`, each by the words chosen, in that run's own order of choices (asked of it first).
+   *  -> 'ok' | 'down' | 'lapsed' (401) | 'taken' (the run had its answers already) | 'refused_<status>' */
+  var viaRun = function (ct, late) {
+    var ask = { ct: ct, lang: q.lang || (q.answers[0] && q.answers[0].body.lang) || undefined };
+    if (late) ask.late = { at: q.at };
+    return gChPost('qs', ask).then(function (r) {
+      if (r.status >= 500) return 'down';
+      if (r.status === 401) return 'lapsed';
+      if (!r.ok) return 'refused_' + r.status;
+      return r.json().then(function (qs) {
+        if (!qs || !qs.questions) return 'down';
+        var opt = {}; qs.questions.forEach(function (x) { opt[x.id] = x.options || []; });
+        return q.answers.reduce(function (p, a) {
+          return p.then(function (st) {
+            if (st !== 'ok') return st;
+            var b = {}; for (var k in a.body) if (Object.prototype.hasOwnProperty.call(a.body, k)) b[k] = a.body[k];
+            b.ct = ct; b.pick = (opt[a.q] || []).indexOf(a.text);
+            if (late) b.late = { at: q.at };
+            if (b.pick < 0) return 'refused_no_such_choice';   // every run of a story offers the same choices: this is not that story
+            return gChPost('qa', b).then(function (res) {
+              if (res.status >= 500) return 'down';
+              if (res.status === 401) return 'lapsed';
+              if (!res.ok) return 'refused_' + res.status;
+              // the server judged another answer than the one sent: this question was answered in that run before
+              return res.json().then(function (j) { return a.ok != null && j && typeof j.ok === 'boolean' && j.ok !== a.ok ? 'taken' : 'ok'; }, function () { return 'ok'; });
+            }, function () { return 'down'; });
+          });
+        }, Promise.resolve('ok'));
       });
-    }, Promise.resolve('ok'));
+    }, function () { return 'down'; });
   };
-  // to the run they were given in, saying they are late: its token may have lapsed (see "A LATE result" above)
-  return sendAll(q.ct, function (a) { return Number(a.body.pick); }, true).then(function (st) {
-    if (st === 'down') return false;
-    if (st === 'ok') return done();
-    if (st !== 'lapsed') { q.state = st; return put(q); }
+  var fresh = function () {
     if (!q.url) { q.state = 'refused_401'; return put(q); }
-    // the run's token has lapsed: a fresh run of the same story, each answer by the words chosen
     return gLive(q.url).then(function (u) { return fetch(u, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
       if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
       return res.json().then(function (j) {
-        return gChPost('qs', { ct: j.ct, lang: j.lang }).then(function (r) { return r.ok ? r.json() : null; }).then(function (qs) {
-          if (!qs || !qs.questions) return false;
-          var opt = {}; qs.questions.forEach(function (x) { opt[x.id] = x.options || []; });
-          return sendAll(j.ct, function (a) { return (opt[a.q] || []).indexOf(a.text); }, false).then(function (st2) {
-            if (st2 === 'ok') return done();
-            if (st2 === 'down' || st2 === 'lapsed') return false;
-            q.state = st2; return put(q);
-          });
+        if (!j.ct) return false;
+        return viaRun(j.ct, false).then(function (st) {
+          if (st === 'ok') return done();
+          if (st === 'down' || st === 'lapsed' || st === 'taken') return false;
+          q.state = st; return put(q);
         });
       });
     }, function () { return false; });
+  };
+  return gUsedHas(q.ct).then(function (used) {
+    if (used) return fresh();   // a run already played: not the run for these answers
+    return viaRun(q.ct, true).then(function (st) {
+      if (st === 'down') return false;
+      if (st === 'ok') return done();
+      if (st === 'lapsed' || st === 'taken') return fresh();
+      q.state = st; return put(q);
+    });
   });
 }
 self.addEventListener('message', function (e) {
