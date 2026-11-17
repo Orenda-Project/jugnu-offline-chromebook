@@ -68,6 +68,10 @@ const LOCAL = {
   '/cb': ['cb.html', 'text/html; charset=utf-8'], // the Chromebook test page: Get ready for offline, then play
   '/who': ['who.html', 'text/html; charset=utf-8'], // who's playing: class > section > name, search, add me
 };
+/** The Get-ready step files in ready/, in name order. */
+function readyList() {
+  try { return fs.readdirSync(path.join(HERE, 'ready')).filter((f) => /^[a-z0-9-]+\.js$/.test(f)).sort(); } catch (e) { return []; }
+}
 const BOOT_TAG = '<script src="/__cb/boot.js" defer></script>';
 const TEXT_RX = /^(text\/html|application\/javascript|text\/javascript|application\/json|text\/css|application\/manifest\+json)/i;
 
@@ -116,9 +120,17 @@ const server = http.createServer((req, res) => {
     log({ m: req.method, p: req.url, s: 302, ua });
     return;
   }
+  // Get-ready steps, one file per area (ready/<name>.js); cb.html loads each and runs them after its own steps.
+  const rm = /^\/__cb\/ready\/([a-z0-9-]+\.js)$/.exec(url.pathname);
+  if (rm && readyList().includes(rm[1])) {
+    res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-cache' });
+    res.end(fs.readFileSync(path.join(HERE, 'ready', rm[1])));
+    log({ m: req.method, p: req.url, s: 200, local: true, ua });
+    return;
+  }
   if (url.pathname === '/__cb/manifest') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-    res.end(JSON.stringify({ ...loadConfig(), roster: !!ROSTER, static: staticList() }));
+    res.end(JSON.stringify({ ...loadConfig(), roster: !!ROSTER, static: staticList(), ready: readyList() }));
     log({ m: req.method, p: req.url, s: 200, local: true, ua });
     return;
   }

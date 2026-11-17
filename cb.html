@@ -121,7 +121,7 @@
 
   function run() {
     $('ready').disabled = true;
-    var kid = null, games = [];
+    var kid = null, games = [], loadReady = Promise.resolve();
     setPct(3, 'Installing the offline worker…');
     return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
@@ -132,6 +132,10 @@
       var own = new URLSearchParams(location.search).get('hub');
       if (own) m.hub = own; // a test rig uses its own child, so the Chromebook's link stays unopened
       CFG = m;
+      // Each area's own Get-ready steps (ready/<name>.js) register themselves on window.CB_READY.
+      loadReady = Promise.all((m.ready || []).map(function (f) {
+        return new Promise(function (ok) { var s = document.createElement('script'); s.src = '/__cb/ready/' + f; s.onload = s.onerror = ok; document.head.appendChild(s); });
+      }));
       // This Chromebook's child home, for Home buttons that must work offline (worker + every quiz page).
       try { localStorage.setItem('cb-hub', m.hub); } catch (e) {}
       if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'hub', hub: m.hub });
@@ -199,6 +203,16 @@
           }).catch(function () { return []; });
         }));
       }).then(function (lists) { return warm([].concat.apply([], lists)); }).then(function (r) { log('reading game: ' + (r ? r.warmed : 0) + ' new clips'); });
+    }).then(function () {
+      return loadReady;
+    }).then(function () {
+      // Each step: {name, run(ctx)}; ctx gives the config, this child's ids, the games found and the helpers. A step
+      // that fails is logged and the rest still run.
+      var ctx = { cfg: CFG, hub: CFG.hub, kid: kid, games: games, key: KEY, log: log, warm: warm, frame: frame, abs: abs, ask: ask, setPct: setPct };
+      return (window.CB_READY || []).reduce(function (p, step) {
+        return p.then(function () { setPct(95, 'Saving ' + step.name + '…'); return Promise.resolve().then(function () { return step.run(ctx); }); })
+          .catch(function (e) { log(step.name + ': stopped (' + (e && e.message || e) + ')'); });
+      }, Promise.resolve());
     }).then(function () {
       setPct(100, 'Ready. Everything below now works on this Chromebook without Wi-Fi.');
       $('step2').classList.remove('hidden');
