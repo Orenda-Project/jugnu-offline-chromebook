@@ -34,6 +34,10 @@ export async function playGame(page, opts = {}) {
   const onFail = (r) => { if (isCall(r)) report.posts.push({ p: nameOf(r), status: 'FAILED ' + ((r.failure() && r.failure().errorText) || '') }); };
   page.on('response', onRes); page.on('requestfailed', onFail);
   const t0 = Date.now();
+  // a child comes to a game from the home's Games door: a whole new page. Going straight from one game's address to
+  // the next that differs only after the "#" would not load a page at all (the last game's card would stay up, and
+  // look like this game's end), so the rig leaves the old page first.
+  await page.goto('about:blank').catch(() => {});
   await page.goto(BASE + o.href, { waitUntil: 'load', timeout: 45000 }).catch((e) => anomaly('the page did not load: ' + e.message.split('\n')[0]));
   let lastKey = '', lastChange = Date.now(), readStart = 0, listenStart = 0, n = 0, ended = false;
   const click = async (c) => {
@@ -134,6 +138,8 @@ export async function playGame(page, opts = {}) {
     else await page.waitForTimeout(800);
   }
   page.off('response', onRes); page.off('requestfailed', onFail);
+  // an end card with none of the game's own screens before it is not this game's end
+  if (ended && report.screens.filter(Boolean).length < 2) { ended = false; anomaly(`only "${report.screens.join('>')}" was seen: the game itself did not run`); }
   if (!ended && !report.anomalies.length) anomaly(`did not reach an end card in ${Math.round(o.maxMs / 60000)} min (last screen "${report.last && report.last.screen}")`);
   const m = await media(page);
   report.media = { tried: m.length, played: m.filter((x) => x.ok === true).length, failed: [...new Set(m.filter((x) => x.ok !== true && x.ok !== null).map((x) => `${x.src.split('/').slice(-2).join('/')} (${x.ok})`))].slice(0, 8) };
