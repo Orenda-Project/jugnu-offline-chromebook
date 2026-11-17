@@ -227,7 +227,19 @@ export async function playPart(page, opts = {}) {
       }
     };
     const r = await act();
-    if (r === 'end') break;
+    if (r === 'end') {
+      // the last screen: where its one button is on the page, and what makes the page taller than the window
+      await page.waitForTimeout(900);
+      report.endDom = await page.evaluate(() => {
+        const box = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom), Math.round(r.height)]; };
+        const scr = document.querySelector('#sae-root .sae-screen'); const btn = document.querySelector('.sae-end .sae-btn, .sae-end button');
+        return { win: innerHeight, doc: document.documentElement.scrollHeight, zoom: scr ? scr.style.zoom || '' : null, screen: scr ? box(scr) : null, button: btn ? box(btn) : null,
+          body: [...document.body.children].map((e) => `${e.tagName.toLowerCase()}.${String(e.className).slice(0, 24)}:${getComputedStyle(e).position}:${box(e).join('/')}`).slice(0, 10),
+          root: [...(document.getElementById('sae-root') || document.body).children].map((e) => `${String(e.className).slice(0, 30)}:${box(e).join('/')}`).slice(0, 5),
+          kids: scr ? [...scr.children].map((e) => `${String(e.className).slice(0, 20)}:${box(e).join('/')}:pb${getComputedStyle(e).paddingBottom}`) : [], pad: scr ? getComputedStyle(scr).padding : null };
+      }).catch(() => null);
+      break;
+    }
     await page.waitForTimeout(s.phase === 'running' && s.task && (s.task.mode === 'tap' || s.task.mode === 'keypad' || s.task.mode === 'keyboard') ? 160 : 350);
   }
   if (Date.now() - t0 >= o.maxMs) anomaly(`not finished after ${Math.round(o.maxMs / 60000)} min`);

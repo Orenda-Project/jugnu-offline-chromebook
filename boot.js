@@ -267,6 +267,13 @@
     window.addEventListener('online', function () { setTimeout(drain, 1500); });
     setTimeout(drain, 3500);
 
+    // The pilot's own files kept on this Chromebook follow the pilot's release (pilot-sw.js, "follow the pilot's
+    // release"): asked on every page load with a network; nothing is read again while the release is the same.
+    setTimeout(function () {
+      var w = navigator.serviceWorker.controller;
+      if (w && navigator.onLine) w.postMessage({ type: 'release' });
+    }, 2500);
+
     // A reading done with no network gets its feedback from the scorer on this Chromebook: lit words and stars,
     // never words a minute (games-read.js; the speech lane's scorer). On the Challenge page it watches for a
     // recording the offline worker took; on the sea map, back from a part, it scores that part's stories. The

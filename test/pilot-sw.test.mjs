@@ -371,3 +371,26 @@ test('a run the server refuses to open (the Big flight already flown this month)
   assert.equal(opens, 1);
   assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => [w.ex, w.state]), [['flight:tower', 'refused_409 flight_done']]);
 });
+
+// ---- games lane: the pilot's own files on the device follow the pilot's release ----
+test("a new release of the pilot replaces the saved copies of its own files; the same release is not read again", async () => {
+  let stamp = 'rel-a', body = 'boot v1', reads = 0;
+  const sw = load({ source, fetch: (req) => {
+    const p = new URL(req.url).pathname;
+    if (p === '/__cb/release') return json({ stamp, files: ['/__cb/boot.js'] });
+    if (p === '/__cb/boot.js') { reads += 1; return new Response(body, { status: 200, headers: { 'Content-Type': 'application/javascript' } }); }
+    return json({}, 404);
+  } });
+  const kept = async () => (await (await sw.caches.open('cb-pilot-v1')).match('http://pilot.test/__cb/boot.js')).text();
+  const a = await sw.message({ type: 'release' });
+  assert.deepEqual([a.ok, a.stamp, a.refreshed], [true, 'rel-a', 1]);
+  assert.equal(await kept(), 'boot v1');
+  stamp = 'rel-b'; body = 'boot v2';            // the pilot is released again
+  const b = await sw.message({ type: 'release' });
+  assert.deepEqual([b.ok, b.stamp, b.refreshed, b.was], [true, 'rel-b', 1, 'rel-a']);
+  assert.equal(await kept(), 'boot v2');          // offline now runs the new file, not the old copy
+  body = 'boot v3 (same release)';
+  const c = await sw.message({ type: 'release' });
+  assert.equal(c.refreshed, 0);
+  assert.equal(reads, 2);
+});

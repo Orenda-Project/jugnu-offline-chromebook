@@ -11,6 +11,21 @@
  *
  * cb.html's own step keeps only the Grade 1 battery and the number game's first list; this step is the whole set.
  * It ends by asking the worker which files are NOT on the device, and says so: "ready" is a count, not a hope. */
+// Every press of Get ready, whether or not the step below runs again (a finished step is skipped): the copies of the
+// pilot's own files on this Chromebook are brought to the pilot's current release (pilot-sw.js: "follow the pilot's
+// release"). The start page itself carries no boot.js, so it is asked for here.
+(function () {
+  var again = function () {
+    var w = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!w) return false;
+    var ch = new MessageChannel();
+    ch.port1.onmessage = function (e) { window.__cbRelease = e.data; };
+    w.postMessage({ type: 'release' }, [ch.port2]);
+    return true;
+  };
+  if (!again()) { var t = setInterval(function () { if (again()) clearInterval(t); }, 1000); setTimeout(function () { clearInterval(t); }, 60000); }
+}());
+
 (window.CB_READY = window.CB_READY || []).push({
   name: 'the learning games',
   run: async (ctx) => {

@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { speechRoute } from './speech/serve.mjs';
 
@@ -228,6 +229,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // games lane: which release of the pilot this is (a hash of its own files) and the addresses of those files, so a
+  // Chromebook can tell that the copies it keeps for offline are of an older release and read them all again
+  if (url.pathname === '/__cb/release' && req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(release()));
+    return;
+  }
+
   const local = LOCAL[url.pathname];
   if (local && req.method === 'GET') {
     res.writeHead(200, { 'content-type': local[1], 'cache-control': 'no-cache', 'service-worker-allowed': '/' });
@@ -295,6 +304,21 @@ const server = http.createServer((req, res) => {
   });
   req.pipe(up);
 });
+
+/** The pilot's release: a hash of every file of its own a page can load, and where each is served. */
+let RELEASE = null;
+function release() {
+  if (RELEASE) return RELEASE;
+  const has = (f) => fs.existsSync(path.join(HERE, f));
+  const own = [...new Set(Object.values(LOCAL).map((v) => v[0]))].concat(readyList().map((f) => 'ready/' + f), ['server.mjs', 'speech/match.js', 'speech/jugnu-speech.js', 'speech/serve.mjs', 'home-routes.mjs', 'media-routes.mjs']).filter(has).sort();
+  const h = createHash('sha256');
+  for (const f of own) { h.update(f); h.update(fs.readFileSync(path.join(HERE, f))); }
+  // the worker's own files are renewed by the browser, not kept by the worker; "/" only redirects
+  const pages = Object.keys(LOCAL).filter((p) => !/sw(-stories)?\.js$/.test(p) && has(LOCAL[p][0]))
+    .concat(readyList().map((f) => '/__cb/ready/' + f), ['speech/match.js', 'speech/jugnu-speech.js'].filter(has).map((f) => '/__cb/' + f), ['/sa/play.html']);
+  RELEASE = { stamp: h.digest('hex').slice(0, 16), files: pages };
+  return RELEASE;
+}
 
 /** Files every device needs, whoever the child: Jugnu's own files (from the sandbox code) + what the tours fetched. */
 let STATIC = null;

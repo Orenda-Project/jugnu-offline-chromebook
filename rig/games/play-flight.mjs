@@ -37,6 +37,7 @@ try {
     say(`  screens with a control cut off by the 633 px page: ${cut.length ? cut.length + ' — ' + cut.slice(0, 10).map((l) => l.at.replace('sae-screen.', '') + ' [' + l.cut.join(', ') + '] ' + l.sh + 'px').join(' ; ') : 'none'}`);
     say(`  time: ${Math.round(r.ms / 1000)} s · sync dot: ${r.sync} · tallest screen ${Math.max(...r.layout.map((l) => l.sh))}px in a ${r.layout[0] ? r.layout[0].h : '?'}px page · anomalies: ${r.anomalies.length ? r.anomalies.join(' | ') : 'none'}`);
     if (r.anomalies.length) failed = true;
+    if (r.endDom) say(`  last screen: ${JSON.stringify(r.endDom)}`);
     const back = await backToMap(page, { waitMs: off ? 20000 : 30000 });
     say(`  back to the map: ${back.back ? (back.card ? 'card shown — ' + back.rows.join(' ; ') : 'map shown, NO card — ' + back.text.slice(0, 120)) : 'NO — stayed on: ' + back.text}`);
     if (!back.back) { failed = true; break; }

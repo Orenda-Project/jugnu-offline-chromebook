@@ -1233,6 +1233,44 @@ self.addEventListener('message', function (e) {
     }, function () { port.postMessage([]); }));
   }
 });
+/* ---- games lane: the pilot's own files on the device follow the pilot's release ----
+ * boot.js, games-read.js, cb-fit.css, the start page, the Get-ready steps and the child's battery page (which the
+ * proxy adds to) are kept for offline like any file, and a kept copy is only renewed when a page loads it online. So
+ * a Chromebook that got ready in October went on running October's pilot code with no network. The server says which
+ * release it is (GET /__cb/release: a hash of every pilot file, and their addresses); when that differs from the
+ * release the kept copies were read for, every one of them is read again and kept, and only then is the new release
+ * noted. Asked for by boot.js on every page load with a network, by Get ready every time it is pressed, and when a
+ * new worker takes over. (The worker's own files are renewed by the browser.) */
+var G_RELEASE_KEY = new URL('/__cb/release-kept', self.location.origin).toString();
+var gReleasing = null;
+function gRelease() {
+  if (gReleasing) return gReleasing;
+  var done = function () { gReleasing = null; };
+  gReleasing = fetch('/__cb/release', { cache: 'no-store' }).then(function (res) { return res.ok ? res.json() : null; }).then(function (rel) {
+    if (!rel || !rel.stamp) return { ok: false, why: 'no_release' };
+    return caches.open(KEEP).then(function (c) {
+      return c.match(G_RELEASE_KEY).then(function (r) { return r ? r.json() : {}; }).then(null, function () { return {}; }).then(function (have) {
+        if (have.stamp === rel.stamp) return { ok: true, stamp: rel.stamp, refreshed: 0 };
+        var urls = (rel.files || []).map(function (u) { return new URL(u, self.location.origin).toString(); });
+        return gKeepAll(urls, urls).then(function (out) {
+          // a file that could not be read: the release is not noted, so the next page load tries the whole of it again
+          if (!out.ok) return { ok: false, stamp: rel.stamp, missing: out.missing.length };
+          return c.put(G_RELEASE_KEY, new Response(JSON.stringify({ stamp: rel.stamp, at: Date.now() }), { headers: { 'Content-Type': 'application/json' } }))
+            .then(function () { return { ok: true, stamp: rel.stamp, refreshed: urls.length, was: have.stamp || null }; });
+        });
+      });
+    });
+  }).then(null, function () { return { ok: false, why: 'no_network' }; });
+  gReleasing.then(done, done);
+  return gReleasing;
+}
+self.addEventListener('message', function (e) {
+  var d = e.data || {};
+  if (d.type !== 'release') return;
+  var port = e.ports && e.ports[0];
+  e.waitUntil(gRelease().then(function (out) { if (port) port.postMessage(out); }));
+});
+self.addEventListener('activate', function () { gRelease(); });
 /* ==================================== end of the games lane's block ==================================== */
 
 self.addEventListener('fetch', function (e) {
