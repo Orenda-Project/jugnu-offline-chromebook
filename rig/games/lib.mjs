@@ -62,7 +62,7 @@ export async function shot(page, name) {
 export function children(dir = process.env.CB_PRIVATE) {
   if (!dir) throw new Error('set CB_PRIVATE to the private games-lane folder (students.json + hub-G<n>-<l>.txt)');
   const st = JSON.parse(fs.readFileSync(path.join(dir, 'students.json'), 'utf8'));
-  for (const k of Object.keys(st)) st[k].token = fs.readFileSync(path.join(dir, `hub-${k.replace('.', '-')}.txt`), 'utf8').trim();
+  for (const k of Object.keys(st)) st[k].token = fs.readFileSync(path.join(dir, `hub-${k.replace(/\./g, '-')}.txt`), 'utf8').trim();
   return st;
 }
 

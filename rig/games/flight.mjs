@@ -64,7 +64,8 @@ const look = (page) => page.evaluate(() => {
     scrCls: scr ? scr.className : '', refused: !!document.querySelector('.sae-refused'), fail: (document.querySelector('.sa-fail') || {}).innerText || null,
     primary: ctl('.sae-primary'), next: ctl('.sa-next'), secondary: ctl('.sae-secondary'), pics: ctl('.sae-pic'), opts: ctl('.sae-opt'), bubbles: ctl('.sae-bubble'),
     keys: ctl('.sae-keypad .sae-key, .sae-letters .sae-key'), star: ctl('.sae-star'), words: ctl('button.sae-word'), mic: ctl('.sae-mic-btn'), more: ctl('.sae-more'), replay: ctl('.sae-replay'),
-    typed: (document.querySelector('.sae-typed') || {}).innerText || '',
+    // what has been typed: the answer box of a sum or a word, or the gap tile of a number row
+    typed: (() => { for (const q of ['.sae-typed', '.sae-seq .sae-gap', '.sae-gap', '.sae-sum-blank']) { const e = [...document.querySelectorAll(q)].find(vis); if (e) return e.innerText || ''; } return ''; })(),
     text: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 140),
     dir: mount ? mount.getAttribute('dir') : null, sync: (document.querySelector('.sae-sync') || { getAttribute() { return null; } }).getAttribute('data-state'),
     w: innerWidth, h: innerHeight, sw: document.documentElement.scrollWidth, sh: document.documentElement.scrollHeight,
@@ -144,7 +145,7 @@ export async function playPart(page, opts = {}) {
           if (pic) return click(page, pic);
           return null; // Jugnu has not said the word yet
         }
-        case 'warmup': { const b = usable(s.bubbles)[0]; return b ? click(page, b) : (prim ? click(page, prim) : null); }
+        case 'warmup': { const b = usable(s.bubbles)[0]; return b ? click(page, { ...b, hit: true }) : (prim ? click(page, prim) : null); }
         case 'keypad_warmup': {
           // "press each number": every key once, then whatever it asks next
           const k = usable(s.keys).find((x) => /^\d$/.test(x.k || '') && !/is-(done|hit|on)/.test(x.cls));

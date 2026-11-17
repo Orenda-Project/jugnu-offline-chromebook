@@ -40,7 +40,12 @@
       'sa.css', 'sink-coach.js', 'sink-game.js', 'skin-game.css', 'skin-game.js'].map((f) => abs('/sa/' + f));
     const ART = ['celebrate', 'correct', 'hello', 'idle', 'notyet', 'sleep', 'thinking'].flatMap((m) => [abs(`/wq/jugnu_${m}.webp`), abs(`/wq/jugnu/${m}.webp`)]);
     const KIT = ['/wq/wq-juice.js', '/wq/wq-juice.css', '/__cb/boot.js', '/__cb/sa-drain', '/__cb/cb-fit.css'].map(abs);
-    await warm(ENGINE.concat(ART, KIT));
+    // the engine and the pilot's own files are read again on every Get ready (a kept copy from before an update would
+    // otherwise be what plays with no network); Jugnu's pictures only when they are not kept yet
+    const core = ENGINE.concat(KIT);
+    const got = await ask({ type: 'prepare', urls: core, fresh: core }, 120000);
+    if (!got || !got.ok) log(`big flight: ${got ? got.missing.length : core.length} engine files could not be read again`);
+    await warm(ART);
     // the engine's own list of what a battery can play and show (never a list of our own that could drift from it)
     if (!(window.SAE && window.SAE.offline)) await new Promise((ok) => { const s = document.createElement('script'); s.src = '/sa/sa-offline.js'; s.onload = s.onerror = ok; document.head.appendChild(s); });
     const O = window.SAE && window.SAE.offline;
@@ -99,8 +104,11 @@
     if (kid && !api.some((u) => /\/(numbers|missing|bigger)\?/.test(u))) api.push(`/api/wq/ch/${hub}/numbers?lang=${L}&kid=${kid}`);
     setPct(98, `Saving the number and story games (${pages.length})…`);
     for (const p of pages) await frame(p, 3000);
+    // an exercise already kept is not asked for again: every ask is a serve on the server (a second serve of the
+    // Grade 1 dots is a practice run, and the first one's record is then never played)
+    const fresh = await notKept(api.map(abs));
     let named = [];
-    for (const u of api) named = named.concat(media(await text(u)));
+    for (const u of api) named = named.concat(media(fresh.indexOf(abs(u)) >= 0 ? await text(u) : await fetch(u).then((r) => r.text(), () => '')));
     named = uniq(named).map(abs);
     await keep(named, 'the games\' voices', 98, 99);
     await warm(['/wq/wq-g1.js', '/wq/wq-trail.js', '/wq/wq-challenge.js', '/wq/wq-read-live.js', '/wq/wq-liveread.js', '/wq/wq-liveread.css', '/wq/wq-readalong.js', '/wq/wq-pace.js', '/wq/wq-pace.css', '/wq/wq-moment.js', '/wq/wq-moment.css'].map(abs));

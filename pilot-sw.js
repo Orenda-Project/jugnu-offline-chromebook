@@ -455,6 +455,10 @@ function gamesFetch(e) {
   if (req.method === 'HEAD') { e.respondWith(gHead(req)); return true; }
   // The sea map is kept per child and language only: back from a part its address also carries done= and s=, and a
   // looser match would hand an Urdu child the English map (whichever was kept first).
+  // The child's battery page is one page whatever its address carries (session, part, language): one kept copy,
+  // renewed whenever it is opened online. A looser match used to hand back the oldest copy kept (a page from before
+  // an update, e.g. without the Chromebook layout).
+  if (req.method === 'GET' && u.pathname === '/sa/play.html') { e.respondWith(networkFirst(req, u.origin + '/sa/play.html')); return true; }
   if (req.method === 'GET' && /^\/sa-game\/[^/]+$/.test(u.pathname)) {
     e.respondWith(networkFirst(req, u.origin + u.pathname + '?kid=' + (u.searchParams.get('kid') || '') + '&lang=' + (u.searchParams.get('lang') || '')));
     return true;
@@ -640,33 +644,47 @@ function gChSendRead(q, put) {
     });
   }).then(null, function () { return false; });
 }
+/** One waiting tap game, sent: first to the run the child really played (its token lives two hours), and only when
+ *  that token has lapsed to a fresh serve of the same questions. false = no network yet (stop, try later). */
+function gChSendTaps(q, put) {
+  var same = function (a, b) { return JSON.stringify(a || []) === JSON.stringify(b || []); };
+  var post = function (b) { return fetch('/api/wq/ch/result', { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }); };
+  var sent = function () {
+    return gCh('readwrite', function (s) { s.delete(q.id); return null; }).then(function () {
+      fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game_sent: { ex: q.ex, answers: (q.body.taps || q.body.answers || []).length, lag_s: Math.round((Date.now() - q.at) / 1000) } }) }).catch(function () {});
+      // the kept serve is now a finished one: keep the next, so the next play with no network starts from a live one
+      return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (nx) { return keep(q.url, nx); }, function () { return null; });
+    });
+  };
+  var fresh = function () {
+    return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (res) {
+      if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
+      return res.clone().json().then(function (fr) {
+        if (!fr.ct || !same(fr.items, q.items)) { q.state = 'questions_changed'; return put(q); }
+        var b = {}; for (var k in q.body) if (Object.prototype.hasOwnProperty.call(q.body, k)) b[k] = q.body[k];
+        b.ct = fr.ct;
+        return post(b).then(function (out) {
+          if (out.status >= 500) return false;
+          if (!out.ok) { q.state = 'refused_' + out.status; return put(q); }
+          return sent();
+        }, function () { return false; });
+      });
+    }, function () { return false; });
+  };
+  return post(q.body).then(function (first) {
+    if (first.status >= 500) return false;
+    return first.ok ? sent() : fresh();
+  }, function () { return false; });
+}
 var gChSending = null;
 function gChSend() {
   if (gChSending) return gChSending;
-  var same = function (a, b) { return JSON.stringify(a || []) === JSON.stringify(b || []); };
   var put = function (q) { return gCh('readwrite', function (s) { s.put(q); return null; }); };
   gChSending = gChWaiting().then(function (list) {
     return list.filter(function (q) { return q.state === 'waiting'; }).reduce(function (p, q) {
       return p.then(function (go) {
         if (go === false) return false;
-        if (q.kind === 'read') return gChSendRead(q, put);
-        return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (res) {
-          if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
-          return res.clone().json().then(function (fresh) {
-            if (!fresh.ct || !same(fresh.items, q.items)) { q.state = 'questions_changed'; return put(q); }
-            var b = {}; for (var k in q.body) if (Object.prototype.hasOwnProperty.call(q.body, k)) b[k] = q.body[k];
-            b.ct = fresh.ct;
-            return fetch('/api/wq/ch/result', { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }).then(function (out) {
-              if (out.status >= 500) return false;
-              if (!out.ok) { q.state = 'refused_' + out.status; return put(q); }
-              return gCh('readwrite', function (s) { s.delete(q.id); return null; }).then(function () {
-                fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game_sent: { ex: q.ex, answers: (q.body.taps || q.body.answers || []).length, lag_s: Math.round((Date.now() - q.at) / 1000) } }) }).catch(function () {});
-                // the kept serve is now a finished one: keep the next, so the next play with no network starts from a live one
-                return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (nx) { return keep(q.url, nx); }, function () { return null; });
-              });
-            }, function () { return false; });
-          });
-        }, function () { return false; });
+        return q.kind === 'read' ? gChSendRead(q, put) : gChSendTaps(q, put);
       });
     }, Promise.resolve());
   }).then(null, function () {}).then(function () { gChSending = null; });

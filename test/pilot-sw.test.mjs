@@ -166,12 +166,15 @@ test('a number game finished with no network: the page gets its end, the taps wa
   assert.deepEqual(waiting.map((w) => [w.ex, w.state]), [['numbers', 'waiting']]);
 });
 
-test('back online the waiting taps go to a fresh serve of the SAME questions, with its token', async () => {
+test('back online after the token lapsed: the waiting taps go to a fresh serve of the SAME questions, with its token', async () => {
   const sent = [];
   const sw = load({ source, fetch: (req, body) => {
     const u = new URL(req.url);
     if (req.method === 'GET' && u.pathname.startsWith('/api/wq/ch/')) return serve('ct-fresh');
-    if (u.pathname === '/api/wq/ch/result') { sent.push(JSON.parse(body)); return json({ score: { correct: 2, n: 3, stopped: false } }); }
+    if (u.pathname === '/api/wq/ch/result') {
+      if (JSON.parse(body).ct === 'ct-kept') return json({ error: 'bad_token' }, 401); // two hours have passed
+      sent.push(JSON.parse(body)); return json({ score: { correct: 2, n: 3, stopped: false } });
+    }
     return json({}, 404);
   } });
   await sw.kept(EX, serve('ct-kept'));
@@ -190,8 +193,8 @@ test('back online the waiting taps go to a fresh serve of the SAME questions, wi
 test('a fresh serve with other questions: the taps are NOT sent (they were answers to the kept ones)', async () => {
   const sent = [];
   const sw = load({ source, fetch: (req, body) => {
-    const u = new URL(req.url);
     if (req.method === 'GET') return serve('ct-fresh', [9, 4, 10]);
+    if (JSON.parse(body).ct === 'ct-kept') return json({ error: 'bad_token' }, 401); // two hours have passed
     sent.push(body); return json({});
   } });
   await sw.kept(EX, serve('ct-kept'));
@@ -265,4 +268,37 @@ test('another story on the fresh serve: the reading is not sent as a reading of 
   assert.deepEqual(seen.filter((x) => /upload|result/.test(x)), []);
   assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['questions_changed']);
   assert.equal(await sw.message({ type: 'games-audio-kept' }), 0);
+});
+
+test('back online within the token\'s life: the taps go to the run they were played in (no new serve is asked for)', async () => {
+  const calls = [];
+  const sw = load({ source, fetch: (req, body) => {
+    const u = new URL(req.url);
+    calls.push(req.method + ' ' + u.pathname);
+    if (u.pathname === '/api/wq/ch/result') return JSON.parse(body).ct === 'ct-kept' ? json({ score: { correct: 2, n: 3, stopped: false } }) : json({ error: 'bad_token' }, 401);
+    return serve('ct-fresh');
+  } });
+  await sw.kept(EX, serve('ct-kept'));
+  sw.net.down = true;
+  await sw.post('/api/wq/ch/result', TAPS);
+  sw.net.down = false;
+  sw.net.calls.length = 0; calls.length = 0;
+  await sw.message({ type: 'report' });
+  await tick(30);
+  assert.equal(calls[0], 'POST /api/wq/ch/result');
+  assert.equal(calls.filter((c) => c === 'POST /api/wq/ch/result').length, 1);
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test("the child's battery page with no network is the one kept copy (the newest), not an older one kept under another session's address", async () => {
+  const html = (v) => new Response(`<html>${v}</html>`, { status: 200, headers: { 'Content-Type': 'text/html' } });
+  let version = 'old';
+  const sw = load({ source, fetch: () => html(version) });
+  await sw.kept('/sa/play.html?s=an-old-session&form=sa.game.G1.en', html('old')); // kept by an earlier build of the pilot
+  version = 'new';
+  await (await sw.get('/sa/play.html?s=todays-session&form=sa.game.G1.en')).text(); // opened online today
+  await tick(20);
+  sw.net.down = true;
+  const res = await sw.get('/sa/play.html?s=tomorrows-session&form=sa.game.G1.en&block=maths');
+  assert.equal(await res.text(), '<html>new</html>');
 });

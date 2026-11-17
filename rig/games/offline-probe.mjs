@@ -52,8 +52,10 @@ try {
     await page.locator('[data-tap="run"]').first().click({ timeout: 8000 }).catch(() => say('no Start on the island'));
     await page.waitForURL(/\/sa\/play\.html/, { timeout: 20000 }).catch(() => {});
     const t0 = Date.now();
-    // the engine's own readiness answer (its device_ready event), or 75 s
-    await page.waitForFunction(() => { try { return !!localStorage.getItem('sa:voice') && !!window.__sae; } catch (e) { return false; } }, null, { timeout: 75000 }).catch(() => {});
+    // the engine's own readiness answer (its device_ready event): at once when the worker answers its "prepare";
+    // with a worker that does not, each ask runs out after 60 s, so wait past that
+    await page.evaluate(() => { try { localStorage.removeItem('sa:voice'); } catch (e) { /* as it is */ } }).catch(() => {});
+    await page.waitForFunction(() => { try { return !!localStorage.getItem('sa:voice') && !!window.__sae; } catch (e) { return false; } }, null, { timeout: 170000 }).catch(() => {});
     await page.waitForTimeout(1500);
     const f = await page.evaluate(async () => {
       const q = new URLSearchParams(location.search);
