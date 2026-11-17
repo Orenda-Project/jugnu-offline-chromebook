@@ -192,9 +192,10 @@ What was added and proven on 18 Nov (the same rig; sandbox):
   rising to 633 and 615 by 0.7 s. After: 633 and 615 from the first frame (Urdu and English homes).
 - **The Challenge's screens on the short page**: across the runs, 15 kinds of screen had a control below 633 px (the
   warm-up's 0 and delete at 755–838 px, the microphone notice's OK at 760–812, a result card's Home at 754–881, the
-  read-along's pause at 772–990). After the scale-to-fit in `boot.js`: 11 games for three children (the dots in
-  Urdu; warm-up, bigger, read along, read aloud and listen in English and in Urdu), nothing below the page on any
-  screen and no scrolling.
+  read-along's pause at 772–990). After the scale-to-fit in `boot.js`: 21 games for five children (the dots in
+  Urdu; warm-up, bigger, read along, read aloud and listen, twice in English and twice in Urdu), nothing below the
+  page on any screen and no scrolling. (A first version left any screen with the story's words unscaled, and Urdu
+  Listen's done card stayed 776 px; only the screens read aloud from are left alone now.)
 - **A newer worker taking over in the middle of work** (a new pilot release reaching a device). Seen twice, both on
   the first run after the worker's file changed: one "Which is bigger?" of 17 offline number games opened on "No
   internet. Try again" at once, though the game was on the device; and Get ready's "Child home" step stopped with
