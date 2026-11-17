@@ -131,7 +131,7 @@ Chromebook**: the test unit was off the network that day.
 | Check this Chromebook (no network reached) | Stories: 18 of 18 fine (every shelf, every book's files, the answers, a book of each grade and language opened, voices played) |
 | Every book online: Jugnu reads, the words light, questions, look-back, done | 86 of 86 books, 717 of 717 pages played to the end with the light moving, 394 questions, every step answered 200 by the server |
 | Every book with the network off | 86 of 86 books, 717 of 717 pages, 394 questions checked on the device (253 look-backs), 86 done screens; 975 steps kept |
-| Back online after the offline run | 1,076 kept steps sent by themselves (411 from one device in 4 min 9 s), none dropped; the server's shelf marks 50 of 50 English and 36 of 36 Urdu books read |
+| Back online after the offline run | 1,076 kept steps sent by themselves (411 from one device in 4 min 9 s), none dropped, each answered by the server (93 "book done", 93 "questions done"). The server's shelf then marks 50 of 50 English and 36 of 36 Urdu books read (the online run, same child, had finished them too) |
 | Your turn online (live), a page of each grade 1-5, English and Urdu | Words counted on every page: Urdu 14/16, 26/26, 11/11, 20/21, 49/71; English 4/5, 15/15, 27/27, 61 in four parts, 29/64 |
 | Your turn with the network off, the same pages | Saved and scored after reconnecting: Urdu 14/16, 26/26, 11/11, 20/21 (equal to live), 71/71 in four parts |
 | Your turn with the network off, scored on the device | English: 12/12, 8/8, 8/8 on the device and online; Urdu: 15, 17, 17 on the device, 14/16, 18/18, 18/18 online. The page shows words and stars, no speed; the server gets the online count |
