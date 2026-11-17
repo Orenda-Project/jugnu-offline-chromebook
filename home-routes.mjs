@@ -106,7 +106,8 @@ export function homeRoutes({ here, deviceKey, loadConfig, roster, readBody, log,
     if (url.pathname === '/cb/app.webmanifest' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' });
       res.end(JSON.stringify({
-        name: 'Jugnu', short_name: 'Jugnu', start_url: '/cb', scope: '/', display: 'standalone', background_color: '#f6f1e4', theme_color: '#f6f1e4',
+        id: '/cb', name: 'Jugnu', short_name: 'Jugnu', description: 'Jugnu on this Chromebook, with or without the internet',
+        start_url: '/cb', scope: '/', display: 'standalone', background_color: '#f6f1e4', theme_color: '#f6f1e4',
         icons: [{ src: '/wq/jugnu/hello.webp', sizes: '200x200', type: 'image/webp', purpose: 'any' }], // Jugnu's own icon
         shortcuts: [{ name: 'Child home', url: '/cb/home' }, { name: "Who's playing?", url: '/who' }],
       }));

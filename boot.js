@@ -5,6 +5,15 @@
   if (!('serviceWorker' in navigator)) return;
   var badge;
 
+  // Protected from clean-up (lane/home). Chrome passes over a site that holds persistent storage when the drive runs
+  // low, and gives it without asking to a site that is installed, bookmarked or much used, but only when asked. So
+  // every page asks until it is held: the day this Chromebook qualifies, it is protected (cb.html says which and how).
+  try {
+    if (navigator.storage && navigator.storage.persisted && navigator.storage.persist) {
+      navigator.storage.persisted().then(function (held) { return held || navigator.storage.persist(); }).catch(function () {});
+    }
+  } catch (e) { /* no storage manager */ }
+
   // Storybooks: "Your turn" saved on this device when Jugnu's speech service cannot be reached, and the kept story
   // steps sent when the network is back (stories.js).
   (function () { var s = document.createElement('script'); s.src = '/__cb/stories.js'; s.async = false; (document.head || document.documentElement).appendChild(s); }());
