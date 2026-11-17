@@ -195,10 +195,13 @@ What was added and proven on 18 Nov (the same rig; sandbox):
   read-along's pause at 772–990). After the scale-to-fit in `boot.js`: 11 games for three children (the dots in
   Urdu; warm-up, bigger, read along, read aloud and listen in English and in Urdu), nothing below the page on any
   screen and no scrolling.
-- **Seen once and not explained**: in the first late-result run one "Which is bigger?" (of 17 number games played
-  offline in the two runs) opened on "No internet. Try again" at once. The game was on that device (asked with no
-  network afterwards, the worker answered it), and it did not happen again. That run's rig did not keep the request
-  that got no answer; it does now (`requests with no answer`).
+- **Seen once each and not explained** (both while a newer worker was taking over a page that had the older one):
+  one "Which is bigger?" (of 17 number games played offline in the two late-result runs) opened on "No internet. Try
+  again" at once, though the game was on that device (asked with no network afterwards, the worker answered it);
+  and on a last run Get ready's "Child home" step stopped with "the child home did not open" for two children at the
+  same moment, so nothing behind their Games door was saved (the same step on the same profile opened the home
+  twice afterwards). Neither run kept what was needed to say why. The rig now keeps requests that got no answer,
+  and the step now reads the frame afresh, waits once more for the doors, and says what the frame showed.
 
 What cannot be done by the pilot, and why:
 
