@@ -1449,7 +1449,8 @@ self.addEventListener('fetch', function (e) {
   if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(LIB_RX.test(u.pathname) ? homeGet(req, u).then(videoListFit) : homeGet(req, u)); return; }
   var key = keyFor(req);
   if (u.origin === self.location.origin && LIB_RX.test(u.pathname)) { e.respondWith(networkFirst(req, key).then(videoListFit)); return; }
-  if (MEDIA_RX.test(u.pathname)) { e.respondWith(media(req, key)); return; }
+  // (VIDEOS: a picture of the media store too, a lesson's poster: it is kept in the media cache, which media() looks in)
+  if (MEDIA_RX.test(u.pathname) || videoStore(req.url)) { e.respondWith(media(req, key)); return; }
   if (u.origin !== self.location.origin && req.destination !== 'image' && req.destination !== 'font' && req.destination !== 'style' && req.destination !== 'script') {
     if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } // READY (lane/home): the self-test reaches no network
     return;

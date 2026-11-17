@@ -179,6 +179,11 @@ shared with the other lanes' runs). Everything else was ready in 164 s; the vide
 | 5 | 109 | 1.1 GB | not saved: the fault described below | 109 lessons saved in 5 min |
 | **1–5** | **518** | **4.6 GB** (5.2 GB with everything else) | 3.5 GB + 438 MB in 115 min for Classes 1 to 4 | |
 
+From nothing on the final code (a new profile, every lane's steps, the child getting lessons as videos alone):
+"Ready" for everything else in 646 s, then the five classes in 2.4, 1.8, 2.2, 2.9 and 2.9 minutes; 23 minutes in
+all, 5.1 GB on the drive. Check this Chromebook with the network truly off then opened all 558 things, the 518
+lessons each by a real player.
+
 The quiz voices are what takes the time: about 70 small files a lesson, each fetched by itself (0.6 MB/s over the
 whole of Classes 1 to 4), where videos alone came at 3.7 MB/s (Class 5), and Nursery's 797 MB in 2.8 min with the
 page closed once and the network cut for 25 s in the middle. A school's line decides the rest.

@@ -76,3 +76,15 @@ test('the audit does not list the cache: it finds each step\'s list by the step\
   assert.ok(step, 'and knows the step');
   assert.equal(step.total, 2); assert.equal(step.missing, 1, 'the video is on the drive, the page is not');
 });
+
+test('a picture from the media store (a lesson\'s poster on the home) is given from the media cache with no network', async () => {
+  // (found by Check this Chromebook on a new profile: "Child home: 1 file missing … _poster.jpg". A picture is asked
+  //  for as an image, not as media, and that path looked in the main cache only)
+  const POSTER = `${STORE}/student-videos/3/L1_poster.jpg`;
+  const sw = load({ fetch: async (req) => (new URL(req.url).pathname === '/__cb/media' ? new Response(bytes(500), { status: 200, headers: { 'Content-Type': 'image/jpeg', 'Content-Length': '500', 'X-CB-Media': '1' } }) : new Response('{}', { status: 200 })) });
+  assert.equal((await sw.message({ type: 'warm', urls: [`${POSTER}?X-Amz-Signature=a`], readable: true })).warmed, 1);
+  sw.net.down = true;
+  const res = await sw.get(`${POSTER}?X-Amz-Signature=later`);
+  assert.equal(res.status, 200, 'not "offline": it is on the drive');
+  assert.equal((await res.arrayBuffer()).byteLength, 500);
+});
