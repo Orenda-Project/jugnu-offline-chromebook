@@ -183,13 +183,17 @@
       });
       var dropped = function () { if (!S.over) goLocal(); };
       window.addEventListener('offline', dropped);
+      // the scorer's model takes about 10 s to load on a Chromebook: it loads while the child reads, not after
+      function warmScorer() { if (turn && onDevice(L)) { try { window.JugnuSpeech.prepare([L]).catch(noop); } catch (e) { /* loads at the first score */ } } }
       function goLocal() {
         if (S.local) return;
         S.local = true;
+        warmScorer();
         var nd = el.querySelector('.lr-nudge');
         if (nd && turn && !onDevice(L)) { nd.style.display = 'none'; var p = document.createElement('p'); p.className = 'lr-nudge'; p.setAttribute('data-cb-nudge', ''); p.textContent = COPY[L].reading; nd.parentNode.insertBefore(p, nd); }
       }
       var o2 = Object.assign({}, o);
+      if (S.local) warmScorer();
       // a read that can only be saved says so while the child reads; one scored on this Chromebook keeps Jugnu's own line
       if (S.local && turn && !onDevice(L)) o2.copy = Object.assign({}, o.copy, { readNow: COPY[L].reading, keepGoing: COPY[L].reading });
       o2.getKey = function () {
