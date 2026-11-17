@@ -48,16 +48,29 @@ async function flight(k, off) {
   k.say(`map: lang=${map.lang} dir=${map.dir} — ${map.islands.map((i) => `${i.k}${i.done ? '✓' : ''}`).join(' ')}`);
   k.out.map = { lang: map.lang, dir: map.dir };
   for (const part of PARTS) {
+    // the child's voice for this part's story: the English island's story, read by the Mac's voice; the Big flight's
+    // English story; Urdu parts get real Urdu speech (of another text: the Mac has no Urdu voice)
+    const voice = part === 'english' ? 'en-story2.wav' : part === 'urdu' ? 'ur.wav' : part === 'tower' ? 'en.wav' : null;
+    if (voice && k.mic && fs.existsSync(path.join(ROOT, 'logs/speech', voice))) fs.copyFileSync(path.join(ROOT, 'logs/speech', voice), k.mic);
     const st = await startPart(k.page, part);
     if (!st.started) { k.say(`${part}: did not start — ${st.text}`); k.out.flight.push({ part, ok: false, why: 'did not start: ' + st.text.slice(0, 120) }); continue; }
     const sid = (st.url.match(/[?&]s=([0-9a-f-]+)/) || [])[1];
     k.say(`# ${part}: ${st.stones.length} stones (session ${sid})`);
     const r = await playPart(k.page, { lang: k.lang, say: k.say, maxMs: Number(flag('max', 14)) * 60000, tag: `mx-${k.key}-${part}${off ? '-off' : ''}`, shots: false });
     const back = await backToMap(k.page, { waitMs: 30000 });
+    // with no network the stories of the part are scored on the device, on the map's card (games-read.js): the child
+    // stays on the card while Jugnu listens, and so does the rig
+    let device = null;
+    if (off && back.back && r.results.some((x) => /\.story2?$/.test(x.task))) {
+      device = await k.page.waitForFunction(() => window.__cbFlightReadDone || null, null, { timeout: 200000, polling: 1000 }).then((h) => h.jsonValue(), () => 'not scored within 200 s');
+      const boxes = await k.page.evaluate(() => [...document.querySelectorAll('[data-cb-read]')].map((b) => ({ state: b.getAttribute('data-cb-read'), stars: b.getAttribute('data-stars'), lit: b.querySelectorAll('[data-read="1"]').length, words: b.querySelectorAll('[data-read]').length, wpm: /per minute|a minute|فی منٹ/.test(b.innerText) }))).catch(() => []);
+      k.say(`       scored on the device: ${JSON.stringify(device)} · on the card: ${JSON.stringify(boxes)}`);
+      device = { done: device, boxes };
+    }
     const cut = r.layout.filter((x) => x.cut && x.cut.length).map((x) => `${x.at.replace('sae-screen.', '')} [${x.cut.join(', ')}]`);
     const scrolls = Object.values(r.scrolls || {}).reduce((a, n) => a + n, 0);
     const row = { part, session: sid, stones: st.stones.length, ended: r.results.length, results: r.results, sounds: `${r.media.played}/${r.media.tried}`, sound_failures: r.media.failed, cut, scrolls, anomalies: r.anomalies,
-      back: back.back, card: !!back.card, card_rows: back.rows || [], seconds: Math.round(r.ms / 1000), ok: !r.anomalies.length && back.back && r.results.length === st.stones.length };
+      back: back.back, card: !!back.card, card_rows: back.rows || [], device, seconds: Math.round(r.ms / 1000), ok: !r.anomalies.length && back.back && r.results.length === st.stones.length };
     k.out.flight.push(row);
     k.say(`  ${row.ok ? 'OK  ' : 'FAIL'} ${part}: ${row.ended}/${row.stones} stones ended · sounds ${row.sounds}${r.media.failed.length ? ' FAILED ' + r.media.failed.slice(0, 3).join(', ') : ''} · cut ${cut.length} · scrolls ${scrolls} · back ${back.back ? (back.card ? 'card' : 'map, no card') : 'NO'} · ${row.seconds} s${r.anomalies.length ? ' · ' + r.anomalies.join(' | ') : ''}`);
     k.say(`       ${r.results.map((x) => `${x.task}=${x.stop}${x.correct != null ? `(${x.correct}/${x.attempted})` : ''}${x.audio ? '[' + x.audio + ']' : ''}`).join(' ')}`);
@@ -73,7 +86,15 @@ async function challenge(k, off) {
   if (!rows.length) k.out.challenge.push({ name: '(none found behind the Games door)', ok: false });
   for (const r of rows) {
     const g = await playGame(k.page, { href: r.href, lang: k.lang, say: k.say, mic: k.mic, tag: `mx-${k.key}-${String(r.item).replace(/\W/g, '_')}${off ? '-off' : ''}`, maxMs: 6 * 60000 });
-    const row = { name: r.name, kind: r.kind, item: r.item, ended: g.ended, end: (g.endText || '').slice(0, 100), screens: g.screens, posts: g.posts, sounds: `${g.media.played}/${g.media.tried}`, sound_failures: g.media.failed, cut: g.cut, scrolls: g.scrolls,
+    // a reading with no network: its feedback is made on the device, under the page's own card
+    let device = null;
+    if (off && g.screens.some((x) => /^read-live/.test(String(x)))) {
+      const res = await k.page.waitForFunction(() => window.__cbReadResult || null, null, { timeout: 200000, polling: 1000 }).then((h) => h.jsonValue(), () => 'not scored within 200 s');
+      const boxes = await k.page.evaluate(() => [...document.querySelectorAll('[data-cb-read]')].map((b) => ({ state: b.getAttribute('data-cb-read'), stars: b.getAttribute('data-stars'), lit: b.querySelectorAll('[data-read="1"]').length, words: b.querySelectorAll('[data-read]').length, wpm: /per minute|a minute|فی منٹ/.test(b.innerText) }))).catch(() => []);
+      device = { result: res, boxes };
+      k.say(`       scored on the device: ${JSON.stringify(res)} · on the card: ${JSON.stringify(boxes)}`);
+    }
+    const row = { name: r.name, kind: r.kind, item: r.item, ended: g.ended, device, end: (g.endText || '').slice(0, 100), screens: g.screens, posts: g.posts, sounds: `${g.media.played}/${g.media.tried}`, sound_failures: g.media.failed, cut: g.cut, scrolls: g.scrolls,
       anomalies: g.anomalies, spoke: g.spoke || null, lang: g.last && g.last.lang, dir: g.last && g.last.dir, seconds: Math.round(g.ms / 1000), ok: g.ended && !g.anomalies.length };
     k.out.challenge.push(row);
     k.say(`  ${row.ok ? 'OK  ' : 'FAIL'} ${r.name} [${r.kind}:${r.item}]: ${g.screens.join('>')} · sent ${g.posts.join(' ') || 'nothing'} · sounds ${row.sounds} · cut ${g.cut.length}${g.anomalies.length ? ' · ' + g.anomalies.join(' | ') : ''}`);

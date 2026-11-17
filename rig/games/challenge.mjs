@@ -104,6 +104,7 @@ export async function playGame(page, opts = {}) {
       listenStart = 0;
       await click(on.find((x) => /^wqc-o\d/.test(x.id)));
     } else if ((c = by('wqc-story-along') || by('wqc-along-ra'))) await click(c); // the story room: hear it from Jugnu first
+    else if (s.screen === 'menu' && (c = on.find((x) => /^wqc-ex-/.test(x.id)))) await click(c); // Grade 1: "Pick one" (one tile)
     else if ((c = by('wqc-go'))) await click(c);
     else if ((c = by('wqc-qa'))) await click(c);
     else if (/read|live|mic/.test(String(s.screen)) && !by('wqc-go')) {

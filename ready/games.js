@@ -39,7 +39,7 @@
     const ENGINE = ['play.html', 'sa-core.js', 'sa-store.js', 'sa-voice.js', 'sa-ui.js', 'sa-sync.js', 'sa-rec.js', 'sa-engine.js', 'sa-mic.js', 'sa-offline.js', 'sa-page.js',
       'sa.css', 'sink-coach.js', 'sink-game.js', 'skin-game.css', 'skin-game.js'].map((f) => abs('/sa/' + f));
     const ART = ['celebrate', 'correct', 'hello', 'idle', 'notyet', 'sleep', 'thinking'].flatMap((m) => [abs(`/wq/jugnu_${m}.webp`), abs(`/wq/jugnu/${m}.webp`)]);
-    const KIT = ['/wq/wq-juice.js', '/wq/wq-juice.css', '/__cb/boot.js', '/__cb/sa-drain', '/__cb/cb-fit.css'].map(abs);
+    const KIT = ['/wq/wq-juice.js', '/wq/wq-juice.css', '/__cb/boot.js', '/__cb/sa-drain', '/__cb/cb-fit.css', '/__cb/games-read.js'].map(abs);
     // the engine and the pilot's own files are read again on every Get ready (a kept copy from before an update would
     // otherwise be what plays with no network); Jugnu's pictures only when they are not kept yet
     const core = ENGINE.concat(KIT);

@@ -74,6 +74,7 @@ const LOCAL = {
   '/sa/sw.js': ['sa-sw-off.js', 'application/javascript; charset=utf-8'],
   '/__cb/sa-drain': ['sa-drain.html', 'text/html; charset=utf-8'],
   '/__cb/cb-fit.css': ['cb-fit.css', 'text/css; charset=utf-8'], // the battery's screens fitted to a 1366x633 page
+  '/__cb/games-read.js': ['games-read.js', 'application/javascript; charset=utf-8'], // a reading with no network: feedback from the scorer on the device
 };
 /** The Get-ready step files in ready/, in name order. */
 function readyList() {
