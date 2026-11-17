@@ -17,7 +17,7 @@ var MEDIA_RX = /\.(mp3|m4a|ogg|opus|wav|webm|mp4|m3u8|ts)(\?|$)/i;
 var misses = [];
 
 self.addEventListener('install', function () { self.skipWaiting(); });
-self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });
+self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim().then(homeMove)); }); // homeMove: block HOME
 
 function keyFor(req) {
   var u = new URL(req.url);
@@ -27,20 +27,33 @@ function keyFor(req) {
 function keep(key, res) {
   // 200, or an opaque answer for a file on another site (R2 clips): the browser plays those, it only cannot read them.
   if (!res || res.type === 'opaqueredirect' || (res.status !== 200 && res.type !== 'opaque')) return Promise.resolve();
+  // VIDEOS (lane/home): a file of the media store seen while online is saved through this site (readable, charged at
+  // its real size, one copy whatever its signature) rather than as an unreadable copy Chrome charges ~7 MB for.
+  if (res.type === 'opaque' && videoStore(key)) {
+    var spare = res.clone(); // kept unreadable only if this site cannot fetch it (no device key yet)
+    return videoSave(key).then(function (r) { return r.ok ? null : keepAs(videoKeyOf(key), spare); }).catch(function () {});
+  }
   var copy = res.clone();
-  return caches.open(KEEP).then(function (c) { return c.put(key, copy); }).catch(function () {});
+  // HOME (lane/home): one saved copy per child home whatever link it was opened with; never a page that only says "ask again"
+  return homeFit(copy).then(function (fit) { return fit ? keepAs(homeKey(key), fit) : null; }).catch(function () {});
 }
+function keepAs(key, res) { return caches.open(KEEP).then(function (c) { return c.put(key, res); }); }
 
 function kept(key) {
+  key = homeKey(key); // HOME (lane/home): a child home is saved once, under its children, not under each week's link
   return caches.open(KEEP).then(function (c) {
     // Never a looser match for a kept POST answer: every one shares /__cb/post, so ignoreSearch would hand one
     // child's session to another (it did, 28 Oct: child four played inside child three's session).
     if (key.indexOf('/__cb/post') >= 0) return c.match(key);
-    return c.match(key).then(function (hit) { return hit || c.match(key, { ignoreSearch: true }); });
+    // READY (lane/home): a door's list is the answer to its whole question (which door, which class, which subject):
+    // never another list of the same address (sameAsk), where anything else may differ in its "?…".
+    return c.match(key).then(function (hit) { return hit || (LIST_RX.test(key) ? sameAsk(c, key) : c.match(key, { ignoreSearch: true })); })
+      .then(function (hit) { return hit || homeFallback(c, key); }); // HOME: else this Chromebook's own saved home
   });
 }
 
 function miss(req, why) {
+  if (savedOnly()) { testMisses.push({ u: req.url.slice(0, 300), why: why }); return; } // READY (lane/home): the self-test's own list
   misses.push({ m: req.method, u: req.url.slice(0, 300), why: why, at: Date.now() });
   if (misses.length > 500) misses.shift();
 }
@@ -81,13 +94,15 @@ function networkFirst(req, key) {
 
 /** Cut "bytes=a-b" out of a kept whole file. */
 function slice(full, range) {
-  return full.arrayBuffer().then(function (buf) {
+  // A blob of a kept file is a handle to it on the drive: cutting a slice does not read the whole file into memory
+  // (a lesson video is 6-15 MB and a player asks for many slices).
+  return full.blob().then(function (file) {
     var m = /bytes=(\d*)-(\d*)/.exec(range || '');
-    var size = buf.byteLength;
+    var size = file.size;
     var start = m && m[1] ? Number(m[1]) : 0;
     var end = m && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
     if (m && !m[1] && m[2]) { start = Math.max(0, size - Number(m[2])); end = size - 1; }
-    return new Response(buf.slice(start, end + 1), {
+    return new Response(file.slice(start, end + 1), {
       status: 206,
       headers: {
         'Content-Type': full.headers.get('Content-Type') || 'application/octet-stream',
@@ -101,8 +116,12 @@ function slice(full, range) {
 
 function media(req, key) {
   var range = req.headers.get('Range');
-  return kept(key).then(function (hit) {
+  return videoKept(req.url, key).then(function (hit) { // VIDEOS (lane/home): the readable copy Get ready saved, first
     if (hit) return range && hit.type !== 'opaque' ? slice(hit, range) : hit;
+    // VIDEOS: a lesson video not saved yet plays from the network as asked (Get ready saves videos; playing one does
+    // not start a second whole download). A small clip of the media store is saved readable, in the background.
+    if (videoIs(req.url)) return fetch(req).catch(function () { return offlineAnswer(req); });
+    if (videoStore(req.url)) { videoSave(req.url); return fetch(req).catch(function () { return offlineAnswer(req); }); }
     // Not kept yet: play from the network as asked, and keep the whole file for next time.
     var whole = new Request(req.url, { mode: req.mode === 'no-cors' ? 'no-cors' : 'cors', credentials: 'same-origin' });
     fetch(whole).then(function (res) { return keep(key, res); }).catch(function () {});
@@ -112,9 +131,10 @@ function media(req, key) {
 
 function bodyKey(req) {
   return req.clone().text().then(function (body) {
+    body = homeKey(body); // HOME (lane/home): the same question asked with next week's link is the same question
     var h = 0;
     for (var i = 0; i < body.length; i += 1) h = (h * 31 + body.charCodeAt(i)) | 0;
-    return new URL('/__cb/post?u=' + encodeURIComponent(req.url) + '&h=' + h, self.location.origin).toString();
+    return new URL('/__cb/post?u=' + encodeURIComponent(homeKey(req.url)) + '&h=' + h, self.location.origin).toString();
   });
 }
 
@@ -175,6 +195,463 @@ function homeAnswer() {
   return storedHub().then(function (hub) { return hub ? json({ href: '/h/' + hub, local: true }) : json({ error: 'no_home_on_this_device' }, 404); });
 }
 
+/* ==== HOME (lane/home, bd-fc5mgd.13.3): this Chromebook's child home never goes stale ============================
+ * Jugnu's home link /h/<token> lasts 7 days, locks to the first device that opens it, and is renewed by sending /quiz
+ * on WhatsApp. A school Chromebook has no WhatsApp: on 4 Nov 2026 the pilot Chromebook's Home, Stories and Games all
+ * read "This link has expired". So the pilot server signs each Chromebook its own link (server: POST /__cb/home, with
+ * the device key), and this worker owns it:
+ *
+ *   the record   {hub, key, device, skew, ttl, who:{id, hub}} kept beside the saved files (HUB_KEY). `hub` is this
+ *                Chromebook's home; `who` the home of the child picked on Who's playing?, when the server signs one.
+ *   refresh      with a network, a link a day old is replaced in the background; one that has run out (or has under an
+ *                hour left) is replaced before the page opens (at most HOME_MINT_WAIT_MS).
+ *   any old link a page, a saved page or a bookmark that still names last week's link is sent to the live one; a data
+ *                call or an answer that names it goes to the server with the live one.
+ *   no network   the link's date is not looked at: the saved copy opens. Saved copies are filed under the home's
+ *                children ("~h<tag>~"), not under each week's link, so they survive every refresh; a home link that
+ *                was never saved here opens this Chromebook's own saved home.
+ *   /cb/home     the one address that always opens the home (Home buttons, the start page, a shelf shortcut).
+ *   never        a dead link is not sent to the server (it can only answer "expired"), and a page that only says "ask
+ *                again" (Jugnu's fast first page giving up) is never saved over a good copy.
+ * Other lanes: self.cbHome.live(urlOrBody) -> Promise<the same text with this Chromebook's live link in it>, for a
+ * saved answer sent later (an outbox); self.cbHome.key(url) is the address a saved copy is filed under. */
+var HOME_MINT_WAIT_MS = 3500;
+var HOME_RETRY_MS = 20000;   // after an ask that failed (no network), not again for this long
+var HOME_TOKEN_RX = /eyJ[A-Za-z0-9_-]{17,400}\.[A-Za-z0-9_-]{22}/g;
+var homeSeen = {}, homeSeenN = 0, homeMem = null, homeAsking = {};
+
+/** What a link says about itself, read without any key: its expiry and a short tag for its children. Null: not a home link. */
+function homeInfo(token) {
+  if (typeof token !== 'string') return null;
+  if (Object.prototype.hasOwnProperty.call(homeSeen, token)) return homeSeen[token];
+  var info = null;
+  try {
+    var p = JSON.parse(atob(token.slice(0, token.indexOf('.')).replace(/-/g, '+').replace(/_/g, '/')));
+    if (p && p.k === 'h' && Array.isArray(p.ids) && p.ids.length && p.exp) {
+      var s = p.ids.map(String).sort().join(','), h = 5381;
+      for (var i = 0; i < s.length; i += 1) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+      info = { exp: Number(p.exp), tag: (h >>> 0).toString(36) };
+    }
+  } catch (e) { info = null; }
+  if (homeSeenN > 400) { homeSeen = {}; homeSeenN = 0; }
+  homeSeen[token] = info; homeSeenN += 1;
+  return info;
+}
+/** The address (or body) a saved copy is filed under: every home link in it replaced by its children's tag. */
+function homeKey(text) {
+  if (typeof text !== 'string' || text.indexOf('eyJ') < 0) return text;
+  return text.replace(HOME_TOKEN_RX, function (t) { var i = homeInfo(t); return i ? '~h' + i.tag + '~' : t; });
+}
+function homeTokens(text) {
+  var out = [];
+  if (typeof text !== 'string' || text.indexOf('eyJ') < 0) return out;
+  (text.match(HOME_TOKEN_RX) || []).forEach(function (t) { if (homeInfo(t) && out.indexOf(t) < 0) out.push(t); });
+  return out;
+}
+function homeNames(u) { return u.pathname === '/cb/home' || homeTokens(u.pathname).length > 0; }
+
+function homeState() {
+  if (homeMem) return Promise.resolve(homeMem);
+  return caches.open(KEEP).then(function (c) { return c.match(HUB_KEY); }).then(function (r) { return r ? r.json() : {}; })
+    .then(function (o) { homeMem = homeMem || (o && typeof o === 'object' ? o : {}); return homeMem; }, function () { homeMem = homeMem || {}; return homeMem; });
+}
+function homeSave() {
+  return caches.open(KEEP).then(function (c) { return c.put(HUB_KEY, new Response(JSON.stringify(homeMem || {}), { headers: { 'Content-Type': 'application/json' } })); }).catch(function () {});
+}
+function homeTell(msg) {
+  return self.clients.matchAll({ includeUncontrolled: true }).then(function (cs) { cs.forEach(function (c) { c.postMessage(msg); }); }).catch(function () {});
+}
+// The server's clock, learnt from its last answer: a Chromebook whose own clock is wrong still reads expiry right.
+function homeNow(st) { return Math.floor(Date.now() / 1000) + (st.skew || 0); }
+function homeLeft(st, token) { var i = homeInfo(token); return i ? i.exp - homeNow(st) : -1; }
+/** Which of the two links this Chromebook holds is for these children: 'hub' (its own), 'who' (the picked child's), or null. */
+function homeSlot(st, tag) {
+  var d = st.hub && homeInfo(st.hub), w = st.who && st.who.hub && homeInfo(st.who.hub);
+  return d && d.tag === tag ? 'hub' : w && w.tag === tag ? 'who' : null;
+}
+function homeOf(st, slot) { return slot === 'who' ? (st.who && st.who.hub) || null : st.hub || null; }
+
+/** Ask the server for a fresh link (this Chromebook's, or the picked child's). Resolves the link, or null. */
+function homeMint(st, slot) {
+  var student = slot === 'who' ? st.who && st.who.id : null;
+  if (!st.key || (slot === 'who' && !student)) return Promise.resolve(null);
+  var id = student || '';
+  if (homeAsking[id]) return homeAsking[id];
+  var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = setTimeout(function () { if (ctl) ctl.abort(); }, HOME_MINT_WAIT_MS);
+  var body = { key: st.key, device: st.device || '' };
+  if (st.lang) body.lang = st.lang;
+  if (student) body.student = student;
+  homeAsking[id] = fetch('/__cb/home', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined })
+    .then(function (res) {
+      // the server says no to a child's own home (per-child homes off, or not on the class list): not asked again for an hour
+      if (student && (res.status === 409 || res.status === 404) && st.who && st.who.id === student) { st.who.no = Date.now(); return homeSave().then(function () { return null; }); }
+      if (!res.ok) { st.triedAt = Date.now(); return null; }
+      return res.json().then(function (j) {
+        if (!j || !homeInfo(j.hub)) return null;
+        var skew = Number(j.now) ? Number(j.now) - Math.floor(Date.now() / 1000) : 0;
+        st.skew = Math.abs(skew) > 90 ? skew : 0;
+        st.ttl = Number(j.ttl) || st.ttl;
+        st.triedAt = 0;
+        if (student) { if (st.who && st.who.id === student) { st.who.hub = j.hub; st.who.no = 0; } } else st.hub = j.hub;
+        return homeSave().then(function () { homeTell({ type: 'cb-home', hub: st.hub, who: st.who && st.who.hub || null }); return j.hub; });
+      });
+    }, function () { st.triedAt = Date.now(); return null; })
+    .then(function (v) { clearTimeout(timer); delete homeAsking[id]; return v; });
+  return homeAsking[id];
+}
+/** The link to use now for a slot: fresh enough as it is, or freshly signed; null when it has run out and none can be had. */
+function homeLive(st, slot) {
+  var token = homeOf(st, slot);
+  if (slot === 'who' && (!st.who || !st.who.id || (st.who.no && Date.now() - st.who.no < 3600000))) return Promise.resolve(null);
+  var left = token ? homeLeft(st, token) : -1;
+  var ttl = st.ttl || 604800;
+  var may = Boolean(st.key) && self.navigator.onLine !== false && (!st.triedAt || Date.now() - st.triedAt > HOME_RETRY_MS);
+  if (left > Math.min(3600, ttl / 10)) {
+    if (left < ttl - Math.min(86400, ttl / 7) && may) homeMint(st, slot); // a day old: a newer one, for the next open
+    return Promise.resolve(token);
+  }
+  if (!may) return Promise.resolve(left > 0 ? token : null);
+  return homeMint(st, slot).then(function (fresh) { token = homeOf(st, slot); return fresh || (token && homeLeft(st, token) > 0 ? token : null); });
+}
+/** /cb/home: the picked child's own home when this Chromebook holds one, else this Chromebook's home (live, or saved). */
+function homeOpen(st) {
+  return homeLive(st, 'who').then(function (own) {
+    if (own) return own;
+    return homeLive(st, 'hub').then(function (hub) { return hub || (st.who && st.who.hub) || st.hub || null; });
+  });
+}
+
+/** A GET that names a home link (a page, or its data): the live link, or the saved copy. */
+function homeGet(req, u) {
+  return homeState().then(function (st) {
+    if (u.pathname === '/cb/home') {
+      return homeOpen(st).then(function (hub) {
+        if (hub) return Response.redirect('/h/' + hub + u.search, 302);
+        return fetch(req).catch(function () { return offlineAnswer(req); }); // not set up yet: the server's own page says so
+      });
+    }
+    var token = homeTokens(u.pathname)[0];
+    var info = homeInfo(token);
+    var key = keyFor(req);
+    var nav = req.mode === 'navigate';
+    var slot = homeSlot(st, info.tag);
+    // a page that holds a newer link for the same children than this record (signed while the worker was not in charge)
+    if (slot && info.exp > homeInfo(homeOf(st, slot)).exp + 60) { if (slot === 'who') st.who.hub = token; else st.hub = token; homeSave(); }
+    var dead = info.exp - homeNow(st) <= 0;
+    return (slot ? homeLive(st, slot) : Promise.resolve(null)).then(function (live) {
+      if (live && live !== token && (nav || dead)) {
+        var to = u.pathname.split(token).join(live) + u.search;
+        if (nav) return Response.redirect(to, 302);
+        req = new Request(to, { headers: req.headers, credentials: 'same-origin' });
+      } else if (dead) {
+        // run out, and no live one to be had (no network): the server could only say "expired", so it is not asked
+        return kept(key).then(function (hit) { return hit || offlineAnswer(req); });
+      }
+      return networkFirst(req, key).then(function (res) {
+        if (res.status !== 401) return res;
+        // The server refuses a link this Chromebook thought good (its clock is wrong, or the key changed): a new one
+        // for the next open, and the saved copy now.
+        if (slot) homeMint(st, slot);
+        return kept(key).then(function (hit) { return hit || res; });
+      });
+    });
+  });
+}
+
+/** A POST that names a home link, in its address or its body. */
+function homePost(req) {
+  // READY (self-test): nothing is sent and nothing is queued; a saved answer is given, else a plain "offline"
+  if (savedOnly()) return bodyKey(req).then(kept).then(function (hit) { return hit || json({ ok: false, offline: true, selftest: true }, 503); });
+  return req.clone().text().then(function (body) {
+    var tokens = homeTokens(new URL(req.url).pathname + ' ' + body);
+    if (!tokens.length) return post(req);
+    return homeState().then(function (st) {
+      return Promise.all(tokens.map(function (t) {
+        var slot = homeSlot(st, homeInfo(t).tag);
+        if (!slot || homeLeft(st, t) > 0) return null; // not this Chromebook's, or still good: sent as it is
+        return homeLive(st, slot).then(function (live) { return live && live !== t ? [t, live] : null; });
+      })).then(function (pairs) {
+        var url = req.url, text = body, changed = false;
+        pairs.forEach(function (p) { if (p) { url = url.split(p[0]).join(p[1]); text = text.split(p[0]).join(p[1]); changed = true; } });
+        var out = changed ? new Request(url, { method: 'POST', headers: req.headers, body: text, credentials: 'same-origin' }) : req;
+        var hubJson = /^\/api\/wq\/hub\//.test(new URL(url).pathname);
+        return (hubJson ? homeHub(out, st) : post(out)).then(function (res) {
+          if (res.status !== 401) return res;
+          return bodyKey(out).then(kept).then(function (hit) { return hit || res; }); // refused: the saved answer, if any
+        });
+      });
+    });
+  });
+}
+/* The home's own data (POST /api/wq/hub/<token> {device_ref, kid}). An answer `locked: true` means this link is locked to
+ * another device (a link someone else opened first, or this Chromebook lost its cookie): it is never saved over a good
+ * answer, and a new link is signed and the page told to open it (boot.js: cb-home-moved). */
+function homeHub(req, st) {
+  return bodyKey(req).then(function (key) {
+    return fetch(req.clone()).then(function (res) {
+      if (res.status >= 500) return kept(key).then(function (hit) { return hit || res; });
+      if (!res.ok || !/json/.test(res.headers.get('Content-Type') || '')) return res;
+      return res.clone().json().then(function (j) {
+        var token = homeTokens(req.url)[0];
+        var slot = token && homeSlot(st, homeInfo(token).tag);
+        // The picked child's own home has no child in it: Jugnu does not know that class-list id. Not asked again for
+        // an hour; the page is sent to this Chromebook's home.
+        if (j && slot === 'who' && j.locked !== true && Array.isArray(j.kids) && !j.kids.length && st.who) {
+          st.who.no = Date.now(); st.who.hub = null;
+          homeSave().then(function () { homeTell({ type: 'cb-home-moved', from: token }); });
+          return res;
+        }
+        if (!j || j.locked !== true) { keep(key, res); return res; }
+        if (slot && homeOf(st, slot) === token && (!st.lockedAt || Date.now() - st.lockedAt > 60000)) {
+          st.lockedAt = Date.now();
+          homeMint(st, slot).then(function (hub) { if (hub) homeTell({ type: 'cb-home-moved', from: token }); });
+        }
+        return res;
+      }, function () { return res; });
+    }, function () {
+      return kept(key).then(function (hit) {
+        if (hit) return hit;
+        miss(req, 'post_offline');
+        return new Response(JSON.stringify({ ok: false, offline: true }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+      });
+    });
+  });
+}
+
+/** A page to save, or null. Jugnu's fast first page ends in "ask again" when it gave up: that is not a page. */
+function homeFit(copy) {
+  if (copy.type === 'opaque' || !/^text\/html/i.test(copy.headers.get('Content-Type') || '')) return Promise.resolve(copy);
+  return copy.text().then(function (t) {
+    if (/location\.replace\(location\.pathname\+\(location\.search\?location\.search\+"&":"\?"\)\+"nf=1"\+location\.hash\)<\/script>\s*<\/body>\s*<\/html>\s*$/.test(t)) return null;
+    if (/<script>setTimeout\(function\(\)\{location\.replace\([^<]{1,600}\+location\.hash\)\},\d+\)<\/script>\s*<\/body>\s*<\/html>\s*$/.test(t)) return null;
+    return new Response(t, { status: copy.status, statusText: copy.statusText, headers: copy.headers });
+  });
+}
+/** A home link that was never saved on this Chromebook (another child's, a new one): this Chromebook's own saved home. */
+function homeFallback(c, key) {
+  var m = /~h([0-9a-z]+)~/.exec(key);
+  if (!m) return Promise.resolve(undefined);
+  return homeState().then(function (st) {
+    var own = st.hub && homeInfo(st.hub);
+    if (!own || own.tag === m[1]) return undefined;
+    var k = key.split('~h' + m[1] + '~').join('~h' + own.tag + '~');
+    return c.match(k).then(function (hit) { return hit || c.match(k, { ignoreSearch: true }); });
+  });
+}
+/** Once, when this worker takes over: copies saved under a link (the first pilot) are filed under the home's children. */
+function homeMove() {
+  return caches.open(KEEP).then(function (c) {
+    return c.keys().then(function (reqs) {
+      return reqs.filter(function (r) { return r.url.indexOf('eyJ') >= 0 && r.url !== HUB_KEY; }).reduce(function (p, r) {
+        return p.then(function () {
+          var to = r.url;
+          if (r.url.indexOf('/__cb/post?u=') >= 0) { try { var u = new URL(r.url); u.searchParams.set('u', homeKey(u.searchParams.get('u') || '')); to = u.toString(); } catch (e) {} } else to = homeKey(r.url);
+          if (to === r.url) return null;
+          return c.match(r).then(function (res) { return res ? homeFit(res) : null; })
+            .then(function (fit) { return fit ? c.match(to).then(function (has) { return has ? null : c.put(to, fit); }) : null; })
+            .then(function () { return c.delete(r); });
+        }).catch(function () {});
+      }, Promise.resolve());
+    });
+  }).catch(function () {});
+}
+
+/** {type:'hub', hub, key?, device?}: the start page (or a test rig) names this Chromebook's home. */
+function homeSet(d) {
+  return homeState().then(function (st) {
+    if (homeInfo(d.hub)) st.hub = d.hub; else if (!st.hub) st.hub = d.hub;
+    if (typeof d.key === 'string' && d.key) st.key = d.key;
+    if (typeof d.device === 'string' && d.device) st.device = d.device;
+    return homeSave();
+  });
+}
+/** {type:'home', key, device, who, lang, fresh}: a page hands over what it knows and gets the live home back. */
+function homeAsk(d, port) {
+  return homeState().then(function (st) {
+    if (typeof d.key === 'string' && d.key) st.key = d.key;
+    if (typeof d.device === 'string' && d.device) st.device = d.device;
+    if (d.lang === 'en' || d.lang === 'ur') st.lang = d.lang;
+    if (d.who !== undefined) {
+      var id = typeof d.who === 'string' && /^[0-9a-f-]{36}$/i.test(d.who) ? d.who : null;
+      if (!id) st.who = null; else if (!st.who || st.who.id !== id) st.who = { id: id };
+    }
+    return (d.fresh ? homeMint(st, 'hub') : Promise.resolve(null)).then(function () { return homeLive(st, 'hub'); }).then(function (hub) {
+      return homeLive(st, 'who').then(function (own) {
+        return homeSave().then(function () {
+          var use = hub || st.hub || null;
+          if (port) port.postMessage({ hub: use, live: Boolean(hub), left: use ? homeLeft(st, use) : null, who: own || null, signing: Boolean(st.key) });
+        });
+      });
+    });
+  }).catch(function () { if (port) port.postMessage({ hub: null, live: false }); });
+}
+self.cbHome = {
+  key: homeKey,
+  live: function (text) {
+    return homeState().then(function (st) {
+      return Promise.all(homeTokens(text).map(function (t) {
+        var slot = homeSlot(st, homeInfo(t).tag);
+        return slot ? homeLive(st, slot).then(function (live) { return live && live !== t ? [t, live] : null; }) : null;
+      })).then(function (pairs) { pairs.forEach(function (p) { if (p) text = text.split(p[0]).join(p[1]); }); return text; });
+    });
+  },
+};
+/* ==== end HOME ================================================================================================== */
+
+/* ==== VIDEOS (lane/home, bd-fc5mgd.13.3): lesson videos kept whole on the device ==================================
+ * A lesson video is a signed link on another site (Cloudflare R2, good for 6 hours; no CORS headers). Asked for by a
+ * <video> it comes back unreadable to this worker, so it could not be cut into the byte ranges a player asks for, and
+ * its address changes with every signature. So Get ready fetches each one THROUGH this site (server: GET /__cb/media,
+ * device-key gated, R2 hosts only), checks it arrived whole, and files it under its address without the signature.
+ * A player's range requests are then cut from that copy (slice), with or without a network. */
+var VIDEO_RX = /\.(mp4|webm|m4v|mov)$/i;
+var READABLE_RX = /\.(mp4|webm|m4v|mov|mp3|m4a|ogg|opus|wav|jpg|jpeg|png|webp)$/i; // what GET /__cb/media will fetch
+var VIDEO_STORE_RX = /\.r2\.cloudflarestorage\.com$|\.r2\.dev$/i;                  // Jugnu's media store (the server's MEDIA_HOSTS default)
+var VIDEO_STALL_MS = 45000; // no bytes for this long: given up, tried again by the start page
+/** Is this a file of Jugnu's media store that this site can fetch readable? */
+function videoStore(url) { try { var u = new URL(url); return u.origin !== self.location.origin && VIDEO_STORE_RX.test(u.hostname) && READABLE_RX.test(u.pathname); } catch (e) { return false; } }
+function videoIs(url) { try { var u = new URL(url); return u.origin !== self.location.origin && VIDEO_RX.test(u.pathname); } catch (e) { return false; } }
+function videoKeyOf(url) { var u = new URL(url); return u.origin + u.pathname; }
+/** The kept copy for a media request: the readable one saved through this site first; an unreadable video copy is not used. */
+function videoKept(url, key) {
+  var u;
+  try { u = new URL(url); } catch (e) { return kept(key); }
+  if (u.origin === self.location.origin) return kept(key);
+  return caches.open(KEEP).then(function (c) { return c.match(videoKeyOf(url)); }).then(function (own) {
+    if (own) return own;
+    return kept(key).then(function (hit) { return hit && hit.type === 'opaque' && VIDEO_RX.test(u.pathname) ? undefined : hit; });
+  });
+}
+/** Fetch a media file on another site through this site and keep it whole. Resolves {ok, had|bytes} or {ok:false, why}. */
+function videoSave(url, fresh) {
+  var key = videoKeyOf(url);
+  return caches.open(KEEP).then(function (c) {
+    return (fresh ? Promise.resolve(null) : c.match(key)).then(function (hit) {
+      if (hit) return { ok: true, had: true };
+      return homeState().then(function (st) {
+        var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+        var stall = null;
+        var arm = function () { clearTimeout(stall); stall = setTimeout(function () { if (ctl) ctl.abort(); }, VIDEO_STALL_MS); };
+        arm();
+        return fetch('/__cb/media?u=' + encodeURIComponent(url), { headers: { 'X-CB-Key': st.key || '' }, signal: ctl ? ctl.signal : undefined }).then(function (res) {
+          // Only this site's own media route is believed (it marks its answers), and only a media file is saved: a
+          // server without the route hands the request to Jugnu, which answers any unknown address with a web page.
+          if (res.headers.get('X-CB-Media') !== '1') { clearTimeout(stall); return { ok: false, why: 'no_route' }; }
+          if (res.status !== 200 || !res.body) { clearTimeout(stall); return { ok: false, why: 'http_' + res.status }; }
+          var want = Number(res.headers.get('Content-Length')) || 0;
+          var type = res.headers.get('Content-Type') || 'application/octet-stream';
+          if (/^text\/|json|xml/i.test(type)) { clearTimeout(stall); return { ok: false, why: 'not_media' }; }
+          var reader = res.body.getReader(), chunks = [], got = 0;
+          var pump = function () {
+            arm();
+            return reader.read().then(function (r) { if (r.done) return null; chunks.push(r.value); got += r.value.byteLength; return pump(); });
+          };
+          return pump().then(function () {
+            clearTimeout(stall);
+            if (!got || (want && got !== want)) return { ok: false, why: 'short' };
+            var whole = new Response(new Blob(chunks, { type: type }), { status: 200, headers: { 'Content-Type': type, 'Content-Length': String(got) } });
+            return c.put(key, whole).then(function () {
+              // unreadable copies of the same file (saved before, one per signature) are dropped: each is charged ~7 MB
+              return c.keys(key, { ignoreSearch: true }).then(function (same) { return Promise.all(same.filter(function (r) { return r.url !== key; }).map(function (r) { return c.delete(r); })); });
+            }).then(function () { return { ok: true, bytes: got }; });
+          });
+        }).catch(function (e) { clearTimeout(stall); return { ok: false, why: e && e.name === 'QuotaExceededError' ? 'no_room' : 'failed' }; });
+      });
+    });
+  }).catch(function (e) { return { ok: false, why: e && e.name === 'QuotaExceededError' ? 'no_room' : 'failed' }; });
+}
+/* ==== end VIDEOS ================================================================================================ */
+
+/* ==== READY (lane/home, bd-fc5mgd.13.3): what Get ready meant to save, and a self-test that reaches no network ====
+ *   expect     the start page tells the worker every address a step set out to save (per step); `audit` then says,
+ *              per step, how many are really on the device and names the missing ones. "Ready" is said only at zero.
+ *   saved-only for the self-test: until it is switched off (or SAVED_ONLY_MAX_MS passes) this worker reaches no
+ *              network at all, exactly as with the Wi-Fi off, so a page opened then shows what the device alone can
+ *              do; every miss in that time goes to the self-test's list, not to the server's. */
+var keptN = null, keptAt = 0;
+/* The lists behind the three doors (Stories and Games rows: /api/wq/doors/…?d=…&g=…; Videos: /api/wq/lib/…?g=…&s=…).
+ * Their "?…" chooses WHICH list. Before this, a list not on the drive was answered with any saved list of the same
+ * address: the Games door showed the Stories rows, a class whose lessons were not saved showed another class's. Now a
+ * saved list answers only the same question: the same names and values after "?", in any order. */
+var LIST_RX = /\/api\/wq\/(lib|doors)\//;
+function askOf(url) { var out = []; new URL(url).searchParams.forEach(function (v, k) { out.push(k + '=' + v); }); return out.sort().join('&'); }
+function sameAsk(c, key) {
+  var want = askOf(key);
+  return c.keys(key, { ignoreSearch: true }).then(function (reqs) {
+    var same = reqs.filter(function (r) { return askOf(r.url) === want; })[0];
+    return same ? c.match(same) : undefined;
+  });
+}
+var SAVED_ONLY_MAX_MS = 120000;
+var savedOnlyUntil = 0, testMisses = [];
+function savedOnly() { return Date.now() < savedOnlyUntil; }
+var netFetch = self.fetch.bind(self);
+self.fetch = function () { return savedOnly() ? Promise.reject(new TypeError('saved-only (self-test)')) : netFetch.apply(null, arguments); };
+
+function expectKey(step) { return new URL('/__cb/expect/' + encodeURIComponent(step), self.location.origin).toString(); }
+function expectAdd(step, urls, reset, drop) {
+  return caches.open(KEEP).then(function (c) {
+    return (reset ? Promise.resolve(null) : c.match(expectKey(step))).then(function (r) { return r ? r.json() : []; }).then(function (list) {
+      var seen = {};
+      if (drop) { urls.forEach(function (u) { seen[u] = 1; }); list = list.filter(function (u) { return !seen[u]; }); urls = []; }
+      list.forEach(function (u) { seen[u] = 1; });
+      urls.forEach(function (u) { if (!seen[u]) { seen[u] = 1; list.push(u); } });
+      return c.put(expectKey(step), new Response(JSON.stringify(list), { headers: { 'Content-Type': 'application/json' } })).then(function () { return list.length; });
+    });
+  });
+}
+/** Is this address on the device? Our own files by their exact address; another site's by its path. */
+function has(c, u) {
+  var cross = new URL(u).origin !== self.location.origin;
+  if (!cross) return c.match(homeKey(u)).then(Boolean);
+  return c.match(videoKeyOf(u)).then(function (own) { return own || c.match(u, { ignoreSearch: true }); }).then(function (hit) { return Boolean(hit) && !(hit.type === 'opaque' && videoIs(u)); });
+}
+function audit() {
+  return caches.open(KEEP).then(function (c) {
+    return c.keys().then(function (reqs) {
+      var prefix = new URL('/__cb/expect/', self.location.origin).toString();
+      var lists = reqs.filter(function (r) { return r.url.indexOf(prefix) === 0; });
+      var out = { steps: [], total: 0, missing: 0, kept: reqs.length };
+      return lists.reduce(function (p, r) {
+        return p.then(function () { return c.match(r); }).then(function (res) { return res ? res.json() : []; }).then(function (list) {
+          var step = { step: decodeURIComponent(r.url.slice(prefix.length)), total: list.length, missing: 0, sample: [] };
+          var i = 0;
+          var next = function () {
+            if (i >= list.length) return Promise.resolve();
+            var batch = list.slice(i, i + 40); i += 40;
+            return Promise.all(batch.map(function (u) { return has(c, u).then(function (ok) { if (!ok) { step.missing += 1; if (step.sample.length < 25) step.sample.push(u.replace(/\?X-Amz.*$/, '').slice(0, 200)); } }, function () { step.missing += 1; }); })).then(next);
+          };
+          return next().then(function () { out.steps.push(step); out.total += step.total; out.missing += step.missing; });
+        });
+      }, Promise.resolve()).then(function () { return out; });
+    });
+  });
+}
+function readyMessage(d, port, e) {
+  var reply = function (v) { if (port) port.postMessage(v); };
+  if (d.type === 'expect' && typeof d.step === 'string' && Array.isArray(d.urls)) {
+    e.waitUntil(expectAdd(d.step.slice(0, 60), d.urls.filter(function (u) { return typeof u === 'string' && /^https?:/.test(u); }), d.reset === true, d.drop === true).then(function (n) { reply({ ok: true, n: n }); }, function () { reply({ ok: false }); }));
+    return true;
+  }
+  if (d.type === 'audit') { e.waitUntil(audit().then(reply, function () { reply(null); })); return true; }
+  if (d.type === 'have' && Array.isArray(d.urls)) {
+    e.waitUntil(caches.open(KEEP).then(function (c) { return Promise.all(d.urls.map(function (u) { return has(c, u).catch(function () { return false; }); })); }).then(reply, function () { reply(null); }));
+    return true;
+  }
+  // the saved copy of a page or list as text, with no network asked (null when it is not on the drive)
+  if (d.type === 'kept-text' && typeof d.url === 'string') {
+    e.waitUntil(kept(d.url).then(function (r) { return r && r.type !== 'opaque' ? r.text() : null; }).then(reply, function () { reply(null); }));
+    return true;
+  }
+  if (d.type === 'saved-only') {
+    if (d.on) { savedOnlyUntil = Date.now() + Math.min(SAVED_ONLY_MAX_MS, Number(d.ms) || SAVED_ONLY_MAX_MS); if (d.clear !== false) testMisses = []; reply({ on: true, until: savedOnlyUntil }); } else { savedOnlyUntil = 0; reply({ on: false, misses: testMisses.splice(0, testMisses.length) }); }
+    return true;
+  }
+  return false;
+}
+/* ==== end READY ================================================================================================= */
+
 function localApi(path, body, lsid) {
   return getRec(lsid).then(function (r) {
     if (!r) return json({ error: 'unknown_local_session' }, 404);
@@ -227,6 +704,11 @@ function api(path, body) {
   return fetch('/api/wq/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body) })
     .then(function (res) { return res.text().then(function (t) { var j = {}; try { j = t ? JSON.parse(t) : {}; } catch (e) {} return { ok: res.ok, status: res.status, body: j }; }); });
 }
+// The session's id in Jugnu's database, read from its own session token: with it a quiz started on the device
+// (lsid, which boot.js recorded beside the picked child) names the very row it became (lane/home: who played).
+function sessionIdOf(st) {
+  try { var p = JSON.parse(atob(String(st).slice(0, String(st).indexOf('.')).replace(/-/g, '+').replace(/_/g, '/'))); return (p && p.sid) || null; } catch (e) { return null; }
+}
 function syncOne(r) {
   var start = r.realSt ? Promise.resolve({ ok: true, body: { st: r.realSt } }) : api('session', Object.assign({}, r.session, r.session.new ? { new: Object.assign({}, r.session.new, { force: true }) } : {}));
   return start.then(function (s) {
@@ -243,7 +725,7 @@ function syncOne(r) {
         r.syncedAt = Date.now();
         return putRec(r).then(function () {
           return fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ synced: { lsid: r.lsid, name: r.session.new && r.session.new.name, answers: items.length, finished: !!r.done, score: r.result && r.result.score, lag_s: Math.round((Date.now() - r.createdAt) / 1000) } }) }).catch(function () {});
+            body: JSON.stringify({ synced: { lsid: r.lsid, session_id: sessionIdOf(r.realSt), played_at: new Date(r.createdAt).toISOString(), name: r.session.new && r.session.new.name, answers: items.length, finished: !!r.done, score: r.result && r.result.score, lag_s: Math.round((Date.now() - r.createdAt) / 1000) } }) }).catch(function () {});
         });
       });
   }, function () { return null; });
@@ -348,8 +830,13 @@ function gUuid() {
 function gPost(path, body, device) {
   var headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
   if (device) headers['x-wq-device'] = device;
-  return fetch('/api/sa-game/s/' + path, { method: 'POST', headers: headers, credentials: 'include', cache: 'no-store', body: JSON.stringify(body) });
+  // HOME (lane/home): a home link named in the body (a run's start: {t}) is sent as this Chromebook's live link, so a
+  // part started with no network last week is opened with a link the server still takes
+  return gLive(JSON.stringify(body)).then(function (text) {
+    return fetch('/api/sa-game/s/' + path, { method: 'POST', headers: headers, credentials: 'include', cache: 'no-store', body: text });
+  });
 }
+function gLive(text) { return self.cbHome && self.cbHome.live ? self.cbHome.live(text).then(null, function () { return text; }) : Promise.resolve(text); }
 function gJsonOf(res) { return res.clone().text().then(function (t) { try { return t ? JSON.parse(t) : {}; } catch (e) { return {}; } }, function () { return {}; }); }
 
 /** POST /session: the server's run when it answers; a run on this device when there is no network. */
@@ -359,7 +846,7 @@ function gOpenRun(req, body, device) {
     return gPutRun({ sid: sid, pageSt: G_LOCAL + sid, body: body, device: device, local: true, real: null, at: Date.now() })
       .then(function () { return json({ session_id: sid, st: G_LOCAL + sid, local: true }); });
   };
-  return fetch(req.clone()).then(function (res) {
+  return gPost('session', body, device).then(function (res) {
     return gJsonOf(res).then(function (j) {
       if (res.ok && j.session_id && j.st) {
         return gPutRun({ sid: j.session_id, pageSt: j.st, body: body, device: device, local: false, real: { session_id: j.session_id, st: j.st, at: Date.now() }, at: Date.now() })
@@ -458,6 +945,7 @@ function gPutAway(url, type, body) {
 function gamesFetch(e) {
   var req = e.request;
   var u = new URL(req.url);
+  if (savedOnly()) return false; // READY (lane/home): the self-test reaches no network; its own rules answer
   if (req.method === 'PUT' && G_BUCKET.test(u.hostname)) {
     e.respondWith(req.arrayBuffer().then(function (buf) { return gPutAway(req.url, req.headers.get('content-type'), buf); }).then(null, function () { return new Response('', { status: 503 }); }));
     return true;
@@ -471,7 +959,12 @@ function gamesFetch(e) {
   // an update, e.g. without the Chromebook layout).
   if (req.method === 'GET' && u.pathname === '/sa/play.html') { e.respondWith(networkFirst(req, u.origin + '/sa/play.html')); return true; }
   if (req.method === 'GET' && /^\/sa-game\/[^/]+$/.test(u.pathname)) {
-    e.respondWith(networkFirst(req, u.origin + u.pathname + '?kid=' + (u.searchParams.get('kid') || '') + '&lang=' + (u.searchParams.get('lang') || '')));
+    var canon = u.origin + u.pathname + '?kid=' + (u.searchParams.get('kid') || '') + '&lang=' + (u.searchParams.get('lang') || '');
+    if (!homeNames(u)) { e.respondWith(networkFirst(req, canon)); return true; }
+    // a home link in the address: the HOME block owns it (the live link, the copy filed under the home's children).
+    // The plain map address is left to it whole; back from a part, it is asked for the plain address's copy.
+    if (canon === req.url) return false;
+    e.respondWith(homeGet(new Request(canon, { headers: req.headers, credentials: 'same-origin' }), new URL(canon)));
     return true;
   }
   if (/^\/api\/sa-game\/s\/(session|batch|audio\/presign|audio\/register|status)$/.test(u.pathname)) { e.respondWith(gSaGame(req, u)); return true; }
@@ -534,6 +1027,12 @@ self.addEventListener('message', function (e) {
  * warm-up never change), the taps go up with the new token. Other questions: the taps are not sent, and say so. */
 var gCh = function (mode, fn) { return grec('ch', mode, fn); };
 function gChWaiting() { return gCh('readonly', function (s) { return s.getAll(); }).then(function (l) { return l || []; }, function () { return []; }); }
+/** A kept serve's real address: saved copies are filed under the home's children ("~h<tag>~", lane/home); the link
+ *  itself is the one in the address of the page that asks (its referrer). */
+function gChAddress(key, req) {
+  var m = /\/c\/([^/?#]+)/.exec((req && req.referrer) || '');
+  return m ? key.replace(/~h[0-9a-z]+~/, m[1]) : key;
+}
 /** The kept serve a result's token came from: {url, serve}. */
 function gChServeOf(ct) {
   return caches.open(KEEP).then(function (c) {
@@ -568,7 +1067,7 @@ function gChResult(req) {
     if (typeof body.key === 'string' && body.key.indexOf(G_AUDIO_KEY) === 0) {
       return gChServeOf(body.ct).then(function (hit) {
         if (!hit) return json({ ok: false, offline: true }, 503);
-        return gCh('readwrite', function (st) { st.add({ kind: 'read', url: hit.url, ex: hit.serve.ex || 'read', story: (hit.serve.story && hit.serve.story.text) || null, audio: body.key.slice(G_AUDIO_KEY.length), body: body, state: 'waiting', at: Date.now() }); return null; })
+        return gCh('readwrite', function (st) { st.add({ kind: 'read', url: gChAddress(hit.url, req), ex: hit.serve.ex || 'read', story: (hit.serve.story && hit.serve.story.text) || null, audio: body.key.slice(G_AUDIO_KEY.length), body: body, state: 'waiting', at: Date.now() }); return null; })
           .then(function () { gChSend(); return json({ later: true, offline: true }); });
       });
     }
@@ -577,7 +1076,7 @@ function gChResult(req) {
       if (!body.ct || (!Array.isArray(body.taps) && !Array.isArray(body.answers))) return res || json({ ok: false, offline: true }, 503);
       return gChServeOf(body.ct).then(function (hit) {
         if (!hit) return res || json({ ok: false, offline: true }, 503);
-        return gCh('readwrite', function (s) { s.add({ url: hit.url, ex: hit.serve.ex || null, items: hit.serve.items || [], body: body, state: 'waiting', at: Date.now() }); return null; })
+        return gCh('readwrite', function (s) { s.add({ url: gChAddress(hit.url, req), ex: hit.serve.ex || null, items: hit.serve.items || [], body: body, state: 'waiting', at: Date.now() }); return null; })
           .then(function () { return json({ score: gChScore(hit.serve, body), offline: true }); });
       });
     };
@@ -624,7 +1123,7 @@ function gChAudioPut(req, id) {
 function gChSendRead(q, put) {
   var drop = function () { return gAudio('readwrite', function (st) { st.delete(q.audio); return null; }).then(null, function () {}); };
   var jsonPost = function (path, b) { return fetch('/api/wq/ch/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }); };
-  return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (res) {
+  return gLive(q.url).then(function (url) { return fetch(url, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
     if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
     return res.clone().json().then(function (fresh) {
       if (!fresh.ct || !fresh.story || fresh.story.text !== q.story) { q.state = 'questions_changed'; return drop().then(function () { return put(q); }); }
@@ -670,7 +1169,7 @@ function gChSendTaps(q, put) {
     });
   };
   var fresh = function () {
-    return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (res) {
+    return gLive(q.url).then(function (url) { return fetch(url, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
       if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
       return res.clone().json().then(function (fr) {
         if (!fr.ct || !same(fr.items, q.items)) { q.state = 'questions_changed'; return put(q); }
@@ -720,13 +1219,18 @@ self.addEventListener('message', function (e) {
 self.addEventListener('fetch', function (e) {
   var req = e.request;
   var u = new URL(req.url);
-  if (u.pathname === '/__cb/report' || u.pathname === '/__cb/sw.js') return;
-  if (gamesFetch(e)) return; // games lane: the big flight's runs, HEAD of a kept page
-  if (req.method === 'POST' && u.origin === self.location.origin) { e.respondWith(post(req)); return; }
-  if (req.method !== 'GET') return;
+  if (u.pathname === '/__cb/report' || u.pathname === '/__cb/sw.js' || u.pathname === '/__cb/home') return;
+  if (gamesFetch(e)) return; // games lane: the big flight's runs, HEAD of a kept page, a number game's result, a recording
+  // HOME (lane/home): a request that names a child home link gets this Chromebook's live link (or its saved copy)
+  if (req.method === 'POST' && u.origin === self.location.origin) { e.respondWith(homePost(req)); return; }
+  if (req.method !== 'GET') { if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } return; } // READY: self-test
+  if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(homeGet(req, u)); return; }
   var key = keyFor(req);
   if (MEDIA_RX.test(u.pathname)) { e.respondWith(media(req, key)); return; }
-  if (u.origin !== self.location.origin && req.destination !== 'image' && req.destination !== 'font' && req.destination !== 'style' && req.destination !== 'script') return;
+  if (u.origin !== self.location.origin && req.destination !== 'image' && req.destination !== 'font' && req.destination !== 'style' && req.destination !== 'script') {
+    if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } // READY (lane/home): the self-test reaches no network
+    return;
+  }
   e.respondWith(networkFirst(req, key));
 });
 
@@ -737,24 +1241,52 @@ function report() {
     .catch(function () { misses = batch.concat(misses); });
 }
 
-/** Keep each URL not kept yet, six at a time (the page loaded them before this worker was in charge). */
-function warm(urls) {
+/** Keep each URL not kept yet, six at a time (the page loaded them before this worker was in charge).
+ * READY (lane/home): resolves {warmed, failed, gone, full}. A file of this site counts as kept only under its exact address
+ * (a list asked with another grade or subject is another list); a file on another site by its path (its signature
+ * changes every time). A download that stalls is given up after WARM_WAIT_MS and named in `failed`, so the start page
+ * can try it again and say honestly what is missing. opts.readable: media on another site is fetched through this
+ * site (videoSave) so the copy can be cut into byte ranges; opts.fresh: saved again even when kept. */
+var WARM_WAIT_MS = 60000;
+function warm(urls, opts) {
+  opts = opts || {};
   var queue = urls.slice();
-  var got = 0;
+  var out = { warmed: 0, failed: [], gone: [], full: false };
+  var lanes = Math.max(1, Math.min(6, Number(opts.lanes) || 6));
+  function one(u) {
+    var cross = new URL(u).origin !== self.location.origin;
+    if (cross && (videoIs(u) || ((opts.readable || videoStore(u)) && READABLE_RX.test(new URL(u).pathname)))) {
+      return videoSave(u, opts.fresh).then(function (r) { if (r.ok) { if (!r.had) out.warmed += 1; } else if (r.why === 'http_404' || r.why === 'http_410') out.gone.push(u); else { out.failed.push(u); if (r.why === 'no_room') out.full = true; } });
+    }
+    return caches.open(KEEP).then(function (c) {
+      return (opts.fresh ? Promise.resolve(null) : c.match(homeKey(u), { ignoreSearch: cross })).then(function (hit) {
+        if (hit) return null;
+        var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+        var timer = setTimeout(function () { if (ctl) ctl.abort(); }, WARM_WAIT_MS);
+        return fetch(new Request(u, { mode: cross ? 'no-cors' : 'same-origin', credentials: 'same-origin', signal: ctl ? ctl.signal : undefined }))
+          .then(function (res) {
+            // 404/410: the server does not have it. That is not a download to try again; it is named in `gone`.
+            if (res.status === 404 || res.status === 410) { out.gone.push(u); return null; }
+            if (res.status !== 200 && res.type !== 'opaque') { out.failed.push(u); return null; }
+            // HOME (lane/home): filed under the home's children; a page that only says "ask again" is not saved
+            return homeFit(res).then(function (fit) {
+              if (!fit) { out.failed.push(u); return null; }
+              return c.put(homeKey(u), fit).then(function () { out.warmed += 1; });
+            });
+          })
+          .catch(function (e) { out.failed.push(u); if (e && e.name === 'QuotaExceededError') out.full = true; })
+          .then(function () { clearTimeout(timer); });
+      });
+    }).catch(function () { out.failed.push(u); });
+  }
   function next() {
     var u = queue.shift();
-    if (u === undefined) return Promise.resolve();
-    return kept(u).then(function (hit) {
-      if (hit) return null;
-      var cross = new URL(u).origin !== self.location.origin;
-      return fetch(new Request(u, { mode: cross ? 'no-cors' : 'same-origin', credentials: 'same-origin' }))
-        .then(function (res) { if (res.status === 200 || res.type === 'opaque') { got += 1; return caches.open(KEEP).then(function (c) { return c.put(u, res); }); } return null; })
-        .catch(function () { return null; });
-    }).then(next);
+    if (u === undefined || out.full) return Promise.resolve();
+    return one(u).then(next);
   }
   var workers = [];
-  for (var i = 0; i < 6; i += 1) workers.push(next());
-  return Promise.all(workers).then(function () { return got; });
+  for (var i = 0; i < lanes; i += 1) workers.push(next());
+  return Promise.all(workers).then(function () { keptN = null; return out; });
 }
 
 self.addEventListener('message', function (e) {
@@ -762,9 +1294,10 @@ self.addEventListener('message', function (e) {
   var port = e.ports && e.ports[0];
   if (d.type === 'report') { e.waitUntil(Promise.all([report(), sync()])); return; }
   if (d.type === 'hub' && typeof d.hub === 'string' && /^[A-Za-z0-9._-]{20,400}$/.test(d.hub)) {
-    e.waitUntil(caches.open(KEEP).then(function (c) { return c.put(HUB_KEY, new Response(JSON.stringify({ hub: d.hub }), { headers: { 'Content-Type': 'application/json' } })); }));
+    e.waitUntil(homeSet(d)); // HOME (lane/home): this Chromebook's child home, with the rest of its record kept
     return;
   }
+  if (d.type === 'home') { e.waitUntil(homeAsk(d, port)); return; } // HOME: a page asks for the live home
   if (d.type === 'outbox' && port) {
     e.waitUntil(allRecs().then(function (l) {
       port.postMessage(l.map(function (r) { return { lsid: r.lsid, name: r.session.new && r.session.new.name, answers: Object.keys(r.answers).length, finish: r.finish, done: !!r.done, synced: !!r.realSt, err: r.lastError || null }; }));
@@ -772,13 +1305,15 @@ self.addEventListener('message', function (e) {
     return;
   }
   if (d.type === 'warm') {
-    e.waitUntil(warm((d.urls || []).filter(function (u) { return typeof u === 'string' && /^https?:/.test(u); }))
-      .then(function (n) { if (port) port.postMessage({ warmed: n }); }));
+    e.waitUntil(warm((d.urls || []).filter(function (u) { return typeof u === 'string' && /^https?:/.test(u); }), d)
+      .then(function (r) { if (port) port.postMessage(r); }));
     return;
   }
+  if (readyMessage(d, port, e)) return; // READY (lane/home): expect, audit, saved-only, space
   if (d.type === 'stats' && port) {
-    e.waitUntil(caches.open(KEEP).then(function (c) { return c.keys(); }).then(function (keys) {
-      port.postMessage({ kept: keys.length, misses: misses.length });
-    }));
+    // READY (lane/home): pages ask every few seconds; listing thousands of kept files each time is slow on 2 cores,
+    // so the count is taken at most every 20 s (and after each warm).
+    e.waitUntil((keptN !== null && Date.now() - keptAt < 20000 ? Promise.resolve(keptN) : caches.open(KEEP).then(function (c) { return c.keys(); }).then(function (keys) { keptN = keys.length; keptAt = Date.now(); return keptN; }))
+      .then(function (n) { port.postMessage({ kept: n, misses: misses.length }); }));
   }
 });

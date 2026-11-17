@@ -319,3 +319,38 @@ test("a page's upload of a recording to the storage bucket goes through the pilo
   assert.equal(u.searchParams.get('u'), R2);
   assert.deepEqual([seen[0].method, seen[0].type, seen[0].body], ['PUT', 'audio/webm', 'VOICE']);
 });
+
+// ---- games lane meets the home lane: the home link is renewed every day; what was saved under last week's link must still open ----
+const homeLink = (exp) => Buffer.from(JSON.stringify({ k: 'h', ids: ['11111111-2222-4333-8444-555555555555'], l: 'ur', exp })).toString('base64url') + '.' + 'A'.repeat(22);
+
+test('after the home link is renewed, the sea map saved under the old link opens with no network, in the same language', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const oldLink = homeLink(now + 3 * 86400), newLink = homeLink(now + 7 * 86400);
+  const page = (l) => new Response(`<html lang="${l}"><body><main id="sg">map</main><script id="boot" type="application/json">{}</script></body></html>`, { status: 200, headers: { 'Content-Type': 'text/html' } });
+  const sw = load({ source, fetch: (req) => page(new URL(req.url).searchParams.get('lang')) });
+  await (await sw.get(`/sa-game/${oldLink}?kid=abc&lang=en`)).text(); // Get ready, last week
+  await (await sw.get(`/sa-game/${oldLink}?kid=abc&lang=ur`)).text();
+  await tick(30);
+  sw.net.down = true;
+  const back = await sw.get(`/sa-game/${newLink}?kid=abc&lang=ur&done=urdu&s=0f1e2d3c-aaaa-4bbb-8ccc-123456789abc`);
+  assert.equal(back.status, 200);
+  assert.match(await back.text(), /lang="ur"/);
+});
+
+test("a part started with no network under last week's link: the kept start is filed and found whatever the link", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const link = homeLink(now + 86400);
+  const sw = load({ source });
+  sw.net.down = true;
+  const run = await (await sw.post('/api/sa-game/s/session', { ...START, t: link }, { 'x-wq-device': 'dev-1' })).json();
+  assert.equal(run.st, 'cblocal.' + run.session_id);
+  const sent = [];
+  sw.net.down = false;
+  sw.net.calls.length = 0;
+  // (no signing key in this test: the link is sent as it is; with one, the home block swaps in the live link)
+  const res = await sw.post('/api/sa-game/s/batch', { st: run.st, sessionId: run.session_id, seqFrom: 1, seqTo: 2, events: [], results: [] });
+  assert.ok(res.status === 404 || res.status === 200 || res.status === 503);
+  const open = sw.net.calls.find((c) => c.url.endsWith('/api/sa-game/s/session'));
+  assert.ok(open, 'the real run is asked for');
+  assert.equal(JSON.parse(open.body).t, link);
+});

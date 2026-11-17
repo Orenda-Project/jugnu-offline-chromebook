@@ -89,16 +89,17 @@ export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js')
     if (state.down) throw new TypeError('Failed to fetch');
     return net ? net(req, body) : new Response('not found', { status: 404 });
   };
-  const self = {
+  // a worker's `self` IS its global: self.fetch is the fetch the worker's code calls (the worker swaps it for its self-test)
+  const g = {
     location: new URL(ORIGIN + '/__cb/sw.js'),
     addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); },
     skipWaiting: () => Promise.resolve(), clients: { claim: () => Promise.resolve(), matchAll: () => Promise.resolve([]) },
     registration: { scope: ORIGIN + '/' },
+    caches, fetch: fetchImpl, indexedDB: fakeIndexedDB(), Response, Request, Headers, URL, URLSearchParams, crypto: globalThis.crypto, atob, btoa, Blob,
+    setTimeout: timers ? timers.set : setTimeout, clearTimeout: timers ? timers.clear : clearTimeout, setInterval, clearInterval, console, Promise, JSON, Date, Math, Object, Array, String, Number, Uint8Array, encodeURIComponent, decodeURIComponent, structuredClone, TextEncoder, TextDecoder,
   };
-  const ctx = vm.createContext({
-    self, caches, fetch: fetchImpl, indexedDB: fakeIndexedDB(), Response, Request, Headers, URL, URLSearchParams, crypto: globalThis.crypto,
-    setTimeout: timers ? timers.set : setTimeout, clearTimeout: timers ? timers.clear : clearTimeout, console, Promise, JSON, Date, Math, Object, Array, String, Number, Uint8Array, encodeURIComponent, decodeURIComponent, structuredClone, TextEncoder,
-  });
+  g.self = g;
+  const ctx = vm.createContext(g);
   vm.runInContext(fs.readFileSync(source, 'utf8'), ctx, { filename: 'pilot-sw.js' });
 
   const dispatch = (req) => {
