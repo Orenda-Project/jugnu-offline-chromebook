@@ -34,7 +34,7 @@
 
   <div class="card" id="step1">
     <h2>1. Get ready for offline (Wi-Fi on)</h2>
-    <p>Saves Jugnu, two quizzes, the Grade 1 storybooks, the number game and the reading game on this Chromebook. Takes a few minutes.</p>
+    <p>Saves Jugnu, two quizzes, every storybook (all grades, English and Urdu), the number game and the reading game on this Chromebook. Takes several minutes.</p>
     <button class="big" id="ready">Get ready for offline</button>
     <div class="bar"><i id="pct"></i></div>
     <div id="phase" class="sub"></div>
@@ -157,22 +157,8 @@
       }).then(function () { return f; });
     }).then(function () {
       log('child home saved; games: ' + games.length + (kid ? '' : ' (no child id found)'));
-      setPct(45, 'Saving the storybooks…');
-      return fetch('/api/wq/stories/shelf/h/' + CFG.hub + '?kid=' + (kid || '') + '&l=en').then(function (r) { return r.text(); });
-    }).then(function (shelf) {
-      var ids = []; var re = /"(?:id|book_id|bookId)":"([0-9a-f-]{36})"/g, m;
-      while ((m = re.exec(shelf))) if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
-      log('storybooks on the shelf: ' + ids.length);
-      return ids.slice(0, 12).reduce(function (p, id, i) {
-        return p.then(function () {
-          return fetch('/api/wq/stories/book/' + id + '/h/' + CFG.hub + '?kid=' + (kid || '')).then(function (r) { return r.text(); }).then(function (b) {
-            var files = []; var fr = /([a-z]{1,8}\d{0,3}-[0-9a-f]{8}\.(?:webp|ogg|mp3|jpg|json))/g, x;
-            while ((x = fr.exec(b))) if (files.indexOf(x[1]) < 0) files.push(x[1]);
-            setPct(45 + 25 * (i + 1) / Math.min(ids.length, 12));
-            return warm(files.map(function (f) { return abs('/s/' + id + '/' + f); }));
-          });
-        });
-      }, Promise.resolve());
+      // The storybooks (every shelf a child can reach, English and Urdu, every picture and voice) are saved by
+      // ready/stories.js, which also checks that each file was kept.
     }).then(function () {
       setPct(72, 'Saving the quizzes…');
       return CFG.quizzes.reduce(function (p, q) { return p.then(function () { return frame('/q/' + q, 6000); }); }, Promise.resolve());
@@ -261,5 +247,6 @@
   status();
 }());
 </script>
+<script src="/__cb/stories.js" defer></script>
 </body>
 </html>
