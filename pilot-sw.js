@@ -16,6 +16,9 @@ var NETWORK_WAIT_MS = 4000;
 var MEDIA_RX = /\.(mp3|m4a|ogg|opus|wav|webm|mp4|m3u8|ts)(\?|$)/i;
 var misses = [];
 
+// Storybooks (shelf, books, story steps, the speech key): sw-stories.js answers those first.
+try { importScripts('/__cb/sw-stories.js'); } catch (e) { /* stories then go the general way below */ }
+
 self.addEventListener('install', function () { self.skipWaiting(); });
 self.addEventListener('activate', function (e) { e.waitUntil(self.clients.claim()); });
 
@@ -36,7 +39,12 @@ function kept(key) {
     // Never a looser match for a kept POST answer: every one shares /__cb/post, so ignoreSearch would hand one
     // child's session to another (it did, 28 Oct: child four played inside child three's session).
     if (key.indexOf('/__cb/post') >= 0) return c.match(key);
-    return c.match(key).then(function (hit) { return hit || c.match(key, { ignoreSearch: true }); });
+    // The exact file, then the same file kept without its "?v=…" (Get ready saves most files that way), and only
+    // then a search of every kept file for the same path: that last one reads the whole list (thousands of files),
+    // so it must never be the common case.
+    var bare = key.split('?')[0];
+    return c.match(key).then(function (hit) { return hit || (bare !== key ? c.match(bare) : undefined); })
+      .then(function (hit) { return hit || c.match(key, { ignoreSearch: true }); });
   });
 }
 
@@ -293,6 +301,7 @@ self.addEventListener('fetch', function (e) {
   var req = e.request;
   var u = new URL(req.url);
   if (u.pathname === '/__cb/report' || u.pathname === '/__cb/sw.js') return;
+  if (self.CB_STORIES && self.CB_STORIES.fetch(e)) return;
   if (req.method === 'POST' && u.origin === self.location.origin) { e.respondWith(post(req)); return; }
   if (req.method !== 'GET') return;
   var key = keyFor(req);
@@ -315,7 +324,8 @@ function warm(urls) {
   function next() {
     var u = queue.shift();
     if (u === undefined) return Promise.resolve();
-    return kept(u).then(function (hit) {
+    // exactly this file, kept or not (kept()'s search of every file for a like one made each new file slower than the last)
+    return caches.open(KEEP).then(function (c) { return c.match(u); }).then(function (hit) {
       if (hit) return null;
       var cross = new URL(u).origin !== self.location.origin;
       return fetch(new Request(u, { mode: cross ? 'no-cors' : 'same-origin', credentials: 'same-origin' }))
@@ -331,6 +341,7 @@ function warm(urls) {
 self.addEventListener('message', function (e) {
   var d = e.data || {};
   var port = e.ports && e.ports[0];
+  if (self.CB_STORIES && self.CB_STORIES.message(e)) return;
   if (d.type === 'report') { e.waitUntil(Promise.all([report(), sync()])); return; }
   if (d.type === 'hub' && typeof d.hub === 'string' && /^[A-Za-z0-9._-]{20,400}$/.test(d.hub)) {
     e.waitUntil(caches.open(KEEP).then(function (c) { return c.put(HUB_KEY, new Response(JSON.stringify({ hub: d.hub }), { headers: { 'Content-Type': 'application/json' } })); }));

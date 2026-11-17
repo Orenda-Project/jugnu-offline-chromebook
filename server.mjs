@@ -30,7 +30,7 @@ if (!UPSTREAM_ARG) { console.error('Set UPSTREAM (or --upstream) to the Jugnu po
 const UPSTREAM = new URL(UPSTREAM_ARG);
 const PORT = Number(arg('port', process.env.PORT || 8791));
 const LOG_DIR = path.join(HERE, 'logs');
-const OFFLINE_FLAG = path.join(HERE, 'OFFLINE');
+const OFFLINE_FLAG = process.env.OFFLINE_FLAG || path.join(HERE, 'OFFLINE'); // a second copy on one machine names its own switch
 fs.mkdirSync(LOG_DIR, { recursive: true });
 const LOG = fs.createWriteStream(path.join(LOG_DIR, 'requests.jsonl'), { flags: 'a' });
 
@@ -64,6 +64,8 @@ const LOCAL = {
   '/__cb/sw.js': ['pilot-sw.js', 'application/javascript; charset=utf-8'],
   '/sw.js': ['pilot-sw.js', 'application/javascript; charset=utf-8'], // a page that registers its own /sw.js gets this one
   '/__cb/boot.js': ['boot.js', 'application/javascript; charset=utf-8'],
+  '/__cb/sw-stories.js': ['sw-stories.js', 'application/javascript; charset=utf-8'], // the worker's storybook part (importScripts)
+  '/__cb/stories.js': ['stories.js', 'application/javascript; charset=utf-8'], // on every page: Your turn saved on the device, kept story steps sent
   '/hello': ['hello.html', 'text/html; charset=utf-8'], // the device check: model, ChromeOS/Chrome version, memory
   '/cb': ['cb.html', 'text/html; charset=utf-8'], // the Chromebook test page: Get ready for offline, then play
   '/who': ['who.html', 'text/html; charset=utf-8'], // who's playing: class > section > name, search, add me
@@ -150,6 +152,30 @@ const server = http.createServer((req, res) => {
       log({ m: req.method, p: url.pathname, s: ok ? 204 : 401, local: true, ua });
     });
     return;
+  }
+  // Storybook questions with no network (ready/stories.js): which option answers each question. Jugnu checks a tap on
+  // its server and never sends the answer with the book, so the first Chromebook to get ready asks about each question
+  // once and leaves what it learned here; every other Chromebook reads it from here. Only with the device key.
+  if (url.pathname === '/__cb/stories/answers') {
+    const f = path.join(LOG_DIR, 'story-answers.json');
+    const read = () => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return {}; } };
+    if (req.method === 'GET') {
+      const ok = keyOk(url.searchParams.get('key') || '');
+      res.writeHead(ok ? 200 : 401, { 'content-type': 'application/json', 'cache-control': 'private, no-store' });
+      res.end(JSON.stringify(ok ? { books: read() } : { error: 'device_key' }));
+      log({ m: req.method, p: url.pathname, s: ok ? 200 : 401, local: true, ua });
+      return;
+    }
+    if (req.method === 'POST') {
+      readBody(req, (b) => {
+        const small = (o) => o && typeof o === 'object' && Object.keys(o).length <= 30 && Object.keys(o).every((k) => /^\d{1,3}$/.test(k) && Number.isInteger(o[k]) && o[k] >= 0 && o[k] < 20);
+        const ok = b && typeof b === 'object' && keyOk(b.key || '') && /^[0-9a-f-]{36}$/.test(String(b.book || '')) && /^[0-9a-z]{1,16}$/.test(String(b.v || '')) && small(b.a) && small(b.o);
+        if (ok) { const all = read(); all[b.book] = { v: b.v, a: b.a, o: b.o, at: new Date().toISOString() }; fs.writeFileSync(f, JSON.stringify(all)); }
+        res.writeHead(ok ? 204 : 400).end();
+        log({ m: req.method, p: url.pathname, s: ok ? 204 : 400, local: true, ua });
+      });
+      return;
+    }
   }
   // The children who added themselves, for a teacher or admin to match to the roster.
   if (url.pathname === '/__cb/added' && req.method === 'GET') {
