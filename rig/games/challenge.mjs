@@ -73,7 +73,7 @@ export async function playGame(page, opts = {}) {
     let c = null;
     if ((c = by('wqc-help-no'))) await click(c);                       // "Is someone helping you today?" -> on my own
     else if ((c = by('wqc-notice-ok'))) await click(c);                // the microphone notice -> Got it
-    else if (s.dots > 0 && on.some((x) => /^wq-g1-t/.test(x.id))) {   // how many dots?
+    else if (on.some((x) => /^wq-g1-t/.test(x.id))) {                 // how many dots? (none at all is one of the questions)
       const t = on.find((x) => /^wq-g1-t/.test(x.id) && Number(western(x.t)) === s.dots) || on.find((x) => /^wq-g1-t/.test(x.id));
       await click(t);
     } else if (by('wqc-a') && by('wqc-b')) {                            // which is bigger?
