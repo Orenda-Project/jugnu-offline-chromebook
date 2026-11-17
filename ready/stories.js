@@ -26,6 +26,80 @@ var CB_STORIES_MIC = (function () {
 
 (window.CB_READY = window.CB_READY || []).push({
   name: 'storybooks: every grade, English and Urdu',
+  /* Check this Chromebook, the storybooks' part: asked with the worker reaching no network at all. Every shelf, every
+   * book and every file a book names must be on the drive; the answers must be there; one book of each grade and
+   * language is opened in the reader, and one voice of each language in a real player. */
+  check: function (t) {
+    'use strict';
+    var hub = t.hub(), kid = t.kid(), rows = [];
+    var row = function (name, ok, why) { rows.push({ group: 'Stories', name: name, ok: !!ok, why: ok ? '' : (why || 'not on this Chromebook') }); };
+    var each = function (list, fn) { return list.reduce(function (p, x, i) { return p.then(function () { return fn(x, i); }); }, Promise.resolve()); };
+    var json = function (u) { return t.read(u).then(function (x) { try { return x ? JSON.parse(x) : null; } catch (e) { return null; } }); };
+    var shelves = [], books = {}, order = [];
+    ['en', 'ur'].forEach(function (l) { ['', 'all', '1', '2', '3', '4', '5'].forEach(function (g) { shelves.push([g, l]); }); });
+    var got = 0;
+    return each(shelves, function (x) {
+      t.say('storybook shelves…');
+      return json('/api/wq/stories/shelf/h/' + hub + '?kid=' + kid + (x[0] ? '&g=' + x[0] : '') + '&l=' + x[1]).then(function (d) {
+        if (!d || !d.books) return;
+        got += 1;
+        d.books.forEach(function (b) { if (!books[b.id]) { books[b.id] = { id: b.id, title: b.title, grade: b.grade, lang: b.lang }; order.push(b.id); } });
+      });
+    }).then(function () {
+      row('shelves: ' + got + ' of ' + shelves.length + ' (my grade, All grades, grades 1-5; English and Urdu), ' + order.length + ' books', got === shelves.length && order.length > 0, (shelves.length - got) + ' shelves are not saved');
+      var by = { en: { books: 0, pages: 0, files: 0, missing: 0, unread: 0, eg: '' }, ur: { books: 0, pages: 0, files: 0, missing: 0, unread: 0, eg: '' } };
+      var q = 0;
+      return each(order, function (id, n) {
+        t.say('storybook ' + (n + 1) + ' of ' + order.length + '…');
+        var c = by[books[id].lang === 'ur' ? 'ur' : 'en'];
+        return json('/api/wq/stories/book/' + id + '/h/' + hub + '?kid=' + kid).then(function (b) {
+          if (!b || !b.pages) { c.unread += 1; c.eg = c.eg || books[id].title; return null; }
+          c.books += 1; c.pages += b.pages.length; books[id].data = b;
+          if ((b.questions || []).length) q += 1;
+          var files = [], add = function (u) { if (typeof u === 'string' && /^\/s\//.test(u) && files.indexOf(u) < 0) files.push(u); };
+          add(b.cover);
+          b.pages.forEach(function (p) { add(p.image && p.image.url); add(p.text_band && p.text_band.url); add(p.audio && p.audio.url); });
+          add(b.questions_sprite && b.questions_sprite.url);
+          (b.questions || []).forEach(function (x) { add(x.audio && x.audio.q); ((x.audio && x.audio.o) || []).forEach(add); (x.options || []).forEach(function (o) { if (o && o.img) add(/\//.test(o.img) ? o.img : '/s/' + b.id + '/' + o.img); }); });
+          c.files += files.length;
+          return t.have(files.map(t.abs)).then(function (have) {
+            (have || files.map(function () { return false; })).forEach(function (ok, i) { if (!ok) { c.missing += 1; c.eg = c.eg || (books[id].title + ': ' + files[i].split('/').pop()); } });
+          });
+        });
+      }).then(function () {
+        [['en', 'English'], ['ur', 'Urdu']].forEach(function (l) {
+          var c = by[l[0]];
+          row(l[1] + ': ' + c.books + ' books, ' + c.pages + ' pages, ' + c.files + ' pictures and voices', c.books > 0 && !c.missing && !c.unread,
+            (c.unread ? c.unread + ' books are not saved; ' : '') + (c.missing ? c.missing + ' files are not saved; ' : '') + (c.eg ? 'e.g. ' + c.eg : 'no book saved'));
+        });
+        return ctxAsk({ type: 'stories' }).then(function (st) {
+          row('questions can be checked with no network: answers for ' + ((st && st.answers_for) || 0) + ' of ' + q + ' books', st && st.answers_for >= q, 'press Get ready again with the Wi-Fi on');
+        });
+      }).then(function () {
+        // one book of each grade and language, opened in the reader from the saved copy alone; its first voice in a player
+        var pick = {}, list = [];
+        order.forEach(function (id) { var b = books[id], k = b.lang + b.grade; if (b.data && !pick[k]) { pick[k] = 1; list.push(b); } });
+        return each(list, function (b, n) {
+          t.say('opening a story of each grade and language: ' + (n + 1) + ' of ' + list.length + '…');
+          return t.open('Story (grade ' + b.grade + ', ' + (b.lang === 'ur' ? 'Urdu' : 'English') + '): ' + b.title, '/cb/home#story/' + b.id,
+            { see: '.wqs .wqs-stage img, .wqs .wqra-pic', settle: 2200, not: /could not open|did not load|not saved on this device|نہیں کھل سکی/i }).then(function (r) { r.group = 'Stories'; rows.push(r); })
+            .then(function () {
+              var p = (b.data.pages || []).filter(function (x) { return x.audio; })[0];
+              return p && (b.grade === 1 || b.grade === 5) ? t.media('Voice (grade ' + b.grade + ', ' + (b.lang === 'ur' ? 'Urdu' : 'English') + '): ' + b.title, p.audio.url, 'audio').then(function (r) { r.group = 'Stories'; rows.push(r); }) : null;
+            });
+        });
+      });
+    }).then(function () { return rows; });
+    function ctxAsk(msg) {
+      return new Promise(function (ok) {
+        var sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+        if (!sw) return ok(null);
+        var ch = new MessageChannel(), timer = setTimeout(function () { ok(null); }, 8000);
+        ch.port1.onmessage = function (e) { clearTimeout(timer); ok(e.data); };
+        sw.postMessage(msg, [ch.port2]);
+      });
+    }
+  },
   run: function (ctx) {
     'use strict';
     var hub = ctx.hub, kid = ctx.kid || '';
@@ -46,7 +120,7 @@ var CB_STORIES_MIC = (function () {
           var part = left.slice(i, i + BATCH), t0 = Date.now();
           i += BATCH;
           // the pace is for files really fetched: a batch already on this Chromebook costs no wait
-          return ctx.warm(part).then(function (r) { if (say) say(Math.min(i, left.length), left.length); return sleep(Math.max(0, BATCH_MS * ((r && r.warmed) || 0) / BATCH - (Date.now() - t0))); }).then(next);
+          return ctx.warm(part, { each: function () {} }).then(function (r) { if (say) say(Math.min(i, left.length), left.length); return sleep(Math.max(0, BATCH_MS * ((r && r.warmed) || 0) / BATCH - (Date.now() - t0))); }).then(next);
         };
         return next().then(function () { return ctx.ask({ type: 'stories-missing', urls: left }, 90000); }).then(function (m) {
           left = m && m.missing ? m.missing : left;
@@ -136,7 +210,7 @@ var CB_STORIES_MIC = (function () {
       var files = [], pages = 0, got = 0;
       return order.reduce(function (p, id, n) {
         return p.then(function () {
-          ctx.setPct(95, 'Saving the storybooks: reading book ' + (n + 1) + ' of ' + order.length + '…');
+          ctx.setPct(Math.round(10 * (n + 1) / order.length), 'reading book ' + (n + 1) + ' of ' + order.length + '…');
           return getJson('/api/wq/stories/book/' + id + '/h/' + hub + '?kid=' + kid).then(function (b) {
             if (!b || !b.pages) { books[id].failed = true; return null; }
             got += 1; pages += b.pages.length; books[id].data = b;
@@ -146,7 +220,7 @@ var CB_STORIES_MIC = (function () {
         });
       }, Promise.resolve()).then(function () {
         ctx.log('storybooks: ' + got + ' of ' + order.length + ' books read, ' + pages + ' pages, ' + files.length + ' pictures and voices to save');
-        return save(files, function (done, of) { ctx.setPct(95, 'Saving the storybooks: ' + done + ' of ' + of + ' pictures and voices…'); }).then(function (left) { return { files: files.length, left: left.length, got: got, pages: pages }; });
+        return save(files, function (done, of) { ctx.setPct(10 + Math.round(75 * done / of), done + ' of ' + of + ' pictures and voices…'); }).then(function (left) { return { files: files.length, left: left.length, got: got, pages: pages }; });
       });
     }).then(function (sum) {
       // the answers, so a question is checked with no network: from this service if another Chromebook left them, else asked
@@ -159,7 +233,7 @@ var CB_STORIES_MIC = (function () {
             if (!b || !(b.questions || []).length) return null;
             var k = known[id], keep = function (x) { return ctx.ask({ type: 'stories-answers', book: id, v: x.v, a: x.a, o: x.o }, 5000); };
             if (k && k.v === mark(b)) { have += 1; return keep(k); }
-            ctx.setPct(95, 'Saving the storybooks: answers, book ' + (n + 1) + ' of ' + order.length + '…');
+            ctx.setPct(85 + Math.round(15 * (n + 1) / order.length), 'answers, book ' + (n + 1) + ' of ' + order.length + '…');
             return learn(b).then(function (x) {
               if (!Object.keys(x.a).length) return null;
               asked += 1; if (!x.whole) part += 1;

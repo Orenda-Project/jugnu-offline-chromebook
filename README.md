@@ -26,6 +26,22 @@ to one shared account:
 "Network off" means the server dropped every connection **and** the Chromebook's browser was offline
 (`navigator.onLine === false`), so nothing could come from the internet.
 
+## What is proven on the laptop rig (17 Nov 2026), waiting for the Chromebook
+
+A Chromebook-shaped Chrome (1366×768, ChromeOS user agent, its own profile) against sandbox Jugnu. The real
+Chromebook was off the network that day; every line below is a script in `rig/` to run on it.
+
+| Test | Result |
+|---|---|
+| **The child home never goes stale** (`rig/home-check.mjs`, 14 of 14; `--expiry`, 9 of 9) | The server signs each Chromebook its own home link. An **expired** link opened online is sent to a freshly signed one and the home opens. With the network off and **every link on the device expired** (the stored one and the one inside each saved page), `/cb/home`, the Stories door and a different expired link all open from the saved copy; nothing reached the server. Back online: a fresh link. A link locked to another device recovers by itself. On a server that cannot sign (`rig/nokey-check.mjs`, 4 of 4) an expired link still opens the saved home |
+| **Get ready** (`rig/ready-check.mjs`) | Fresh device, closed and reopened in the middle: it carried on from the step that was running and said "Ready" with 3,072 files confirmed on the drive, 0 missing (a run with no interruption: 130 s). Pressed again on a ready device: about 100 s, 9,801 files confirmed. A quiz its teacher had closed was named, not silently skipped |
+| **Lesson videos** (`ready/videos.js`, `rig/videos-check.mjs`, 14 of 14) | Class 2: all 82 lessons (604 MB of video, 5,815 quiz voice clips, 77 MB) saved in 9½–12 minutes at about 1 MB/s. With the network off: a Class 2 child is picked, the Videos door opens on Class 2 with all 82 lessons and their pictures, lessons from across the class **play from the saved copy and scrub ahead** (1280×720), and the questions after each open. Nothing came from the server or from R2 |
+| **Check this Chromebook** (the start page's button; `rig/ready-check.mjs --check --check-offline`) | 112 things opened from the device alone in about 75 s (start page, Who's playing?, home, three doors, quiz, 6 games, 11 storybooks, 82 lesson videos each opened by a real player), and the same with the network truly off (0 requests answered) |
+| **The check finds things** (`rig/check-finds.mjs`, 7 of 7) | A lesson's video, a storybook's page picture and the Games door's list were deleted from the drive: the check named each. Get ready again put them back; the check was clean |
+| **Storybook option voices** (`npm test`) | The first Get ready with honest counts showed 126 storybook sound files "not on the server". Cause: the file-name pattern cut `q1o2-….ogg` down to `o2-….ogg`. Fixed: 356 files for 11 books (was 206), none missing |
+| **Room on the drive** (`rig/storage-audit.mjs`) | Class 2 with everything else: 731 MB really on the drive, 740 MB charged by the browser. (Before the fix, 82 lesson pictures kept as unreadable copies were charged 572 MB.) |
+| **A picked child's own home** (`rig/perchild-check.mjs`, 6 of 6, `HOME_PER_CHILD=1`) | A class-list child Jugnu knows gets a home signed for them alone; one Jugnu does not know gets this Chromebook's home, with no empty page in between. Not yet shown with two different real children: sandbox has no class list whose ids are its own students |
+
 ## Who's playing? (class lists on a shared Chromebook)
 
 1. The child taps their **class**, then their **section**.
@@ -63,6 +79,12 @@ Chromebook (Chrome)                          this repo                       Jug
 - **`cb.html`** (the test page): "Get ready for offline" installs the worker and saves the app, every voice clip,
   the storybooks, the quizzes and both games; then shows links and a "waiting to send / sent" panel.
 - **`server.mjs`**: the proxy. `UPSTREAM` is the Jugnu portal it sits in front of.
+- **`home-routes.mjs`, `hub-sign.mjs`**: the server signs each Chromebook its own child home link
+  (`POST /__cb/home`), so the home never goes stale; `/cb/home` is the one address that always opens it.
+- **`media-routes.mjs`**: lesson videos (and their quiz clips) fetched through this site, so a Chromebook can keep them.
+- **`ready/`**: Get-ready steps, one file per area (`ready/README.md`); `ready/videos.js` saves lesson videos.
+- **`docs/HOME-AND-VIDEOS.md`**: why the home went stale, who-is-playing attribution, the class-link
+  recommendation, how videos are served and what Jugnu should change.
 - **`rig/`**: Playwright scripts that run a Chromebook-shaped Chrome (1366×768, ChromeOS user agent) on a laptop.
 - **`device/`**: scripts that drive a real Chromebook's Chrome over its remote-debugging port (test unit only).
 
@@ -106,11 +128,17 @@ Settings (environment variables; on a laptop, files work too):
 | `UPSTREAM` | the Jugnu portal this sits in front of |
 | `CB_CONFIG` | JSON as in `cb-config.example.json` (else `./cb-config.json`) |
 | `ROSTER_B64` | the school's class list, gzip + base64 of `{school, classes:[{grade, section, students:[{id, name, name_ur, roll}]}]}` (else `ROSTER_FILE`, a path to that JSON) |
-| `DEVICE_KEY` | the key a Chromebook must present to get the class list and send who played |
+| `DEVICE_KEY` | the key a Chromebook must present to get the class list, send who played, ask for its child home and fetch lesson videos |
+| `HUB_SIGNING_KEY` | **secret.** The key Jugnu signs child home links with, for the environment `UPSTREAM` points at. Print it with `INTERNAL_API_KEY=… node tools/derive-hub-key.mjs` (that form signs child links and nothing else). Without it the configured home link is used as it is, and runs out after 7 days |
+| `HOME_STUDENT_IDS` | optional: the child this pilot's Chromebooks open as. Default: the child the configured home link (`CB_CONFIG.hub`) names |
+| `HOME_TTL_S` | optional: how long a signed home lasts. Default 604800 (7 days, Jugnu's own) |
+| `HOME_PER_CHILD` | optional, `1`: a child picked on Who's playing? gets their own Jugnu home. Only when the class list's ids are Jugnu's student ids in that database (`docs/HOME-AND-VIDEOS.md`) |
+| `MEDIA_HOSTS` | optional: host endings lesson media may be fetched from. Default `.r2.cloudflarestorage.com,.r2.dev` |
 
 **As a service (Railway or any host):** deploy this repo with those variables set (the start command is
 `node server.mjs`, it listens on `PORT`), attach a volume at `/app/logs` so who-played records survive a redeploy,
 and give each Chromebook its setup link once: `https://<service>/cb?key=<DEVICE_KEY>`.
+`GET /__cb/home/status?key=<DEVICE_KEY>` says whether the server can sign homes (never a secret).
 
 ```bash
 npm install                                               # browser drivers for the test scripts (dev only)
@@ -127,9 +155,18 @@ child does (Jugnu reads, Your turn with real speech, questions, done) and says w
 For a true offline run, `touch OFFLINE` (the server drops every connection) — a browser's own offline switch does
 not reach the worker's requests. `rm OFFLINE` to come back.
 
-**On a Chromebook by hand:** sign in to the shared school account (not Guest), open `https://<service>/cb?key=<key>` once, tap
-**Get ready for offline**, wait for "Ready", switch Wi-Fi off and play. Switch Wi-Fi on: section 3 shows the quiz
-going from "Waiting to send" to "Sent".
+Home, Get ready and videos (each prints PASS/FAIL lines; `P=<private folder> sh rig/serve.sh` runs the server
+with its secrets): `node rig/home-check.mjs` (an expired home link online and with no network; `--expiry` against a
+server run with `HOME_TTL_S=40`; `rig/nokey-check.mjs` against a server with no key); `node rig/ready-check.mjs --videos 2 --interrupt --check --check-offline` (Get ready
+with Class 2's lesson videos, the page closed half-way, then Check this Chromebook); `node rig/videos-check.mjs 2`
+(with no network: Who's playing?, the Videos door, lessons played and scrubbed, the questions after);
+`node rig/videos-sizes.mjs` (lesson video sizes per class); `npm test` (the link signer).
+
+**On a Chromebook by hand:** sign in to the shared school account (not Guest), open `https://<service>/cb?key=<key>` once, tick
+the classes whose lesson videos to save, tap **Get ready for offline** and wait for "Ready" (it can be closed and
+opened again: it carries on). Tap **Check that everything opens without Wi-Fi**: it opens every saved page, story,
+game and video from the Chromebook alone and lists anything missing. Switch Wi-Fi off and play. Switch Wi-Fi on:
+section 3 shows the quiz going from "Waiting to send" to "Sent".
 
 **On a Chromebook, automated:** a test unit in developer mode with debugging features, `--remote-debugging-port=9222`
 in `/etc/chrome_dev.conf`, and `ssh -N -L 9333:127.0.0.1:9222 root@<chromebook>`. Then
@@ -147,19 +184,31 @@ aloud with their word counts, questions, finished books). Game results and the p
 while offline, and what is sent later is stamped with the time it arrived, not the time it was played. Both are
 open issues.
 
+**Who it was.** The pilot's own log (`logs/identity.jsonl`, sent from the device whenever there is a network)
+names the picked child beside Jugnu's own ids: a `quiz_start` line carries the quiz's `session_id` (for a quiz
+started with no network, a local id that the worker's sync report pairs with the real `session_id` and the time it
+was played); `home_open` and `game_open` lines carry Jugnu's device id, so what the Chromebook's one home child did
+between two picks can be joined to the picked child. What this cannot do, and what Jugnu should do instead, is in
+`docs/HOME-AND-VIDEOS.md`.
+
 ## What is left
 
 The remaining work is filed as issues in this repo. In short:
 
 1. Build the offline worker into Jugnu itself (precache on install; "Get ready" per grade), so no proxy is needed.
 2. Quiz sessions that start on the device, accepted by the server in batches with the time they were played.
-3. Shared-device mode: a Chromebook set to one class, children tap their name, finishing goes back to the list.
-4. Lesson videos the device can keep (today they are 6-hour signed links on another site, so they are not saved).
+3. Shared-device mode: a school's enrolled Chromebook, children tap their name, and Jugnu itself signs that
+   child's home and records the result against them (the "school device link" in `docs/HOME-AND-VIDEOS.md`). Today
+   Home, Stories, Games and Videos are played as the Chromebook's one home child and joined to the picked child by
+   the pilot's own log.
+4. Lesson videos the device can keep **without this pilot's server in between**: a CORS rule on the bucket or a
+   public file address (the pilot now saves them, but through its own small service: `docs/HOME-AND-VIDEOS.md`).
 5. Nothing live during a child's turn: every clip pre-recorded; read-aloud recorded offline and scored later.
 6. A Chromebook screen: layout for 1366×633, "saved on this device" (not "this phone"), no WhatsApp step.
 7. Offline analytics for storybooks, games and usage events; the time a quiz was played.
 8. Proof that saved content survives a restart in a signed-in account.
-9. The whole library on the device: all storybooks and voices (~0.5 GB) plus one grade's videos (1–2 GB).
+9. The whole library on the device: all storybooks and voices (~0.5 GB) plus the videos of the classes that use
+   it (0.6–1.3 GB a class, 4.6 GB for Classes 1–5; Nursery, KG and Class 6 are listed without a size on sandbox).
 10. Fleet measurement: per device, ready for offline, last sync, offline plays, sync delay.
 
 ## What we learned
@@ -173,6 +222,20 @@ The remaining work is filed as issues in this repo. In short:
 - **A browser's offline emulation does not reach a service worker's requests**: test offline at the server.
 - **On a first visit nothing is kept** until the worker is in charge; the page hands it everything it loaded.
 - These Chromebooks give a page 1366×633: anything below that line needs scrolling.
+- **A child home link runs out after 7 days, and a worker that keeps every `200` page will keep the wrong one.**
+  Jugnu's fast first page answers `200` before it knows the link is expired, then tells the browser to ask again.
+  That page was saved over the good copy, so the home broke offline too (4 Nov). The worker now never sends an
+  expired link to the server and never saves an "ask again" page.
+- **A file from another site that the worker cannot read is charged about 7 MB by Chrome, whatever its size.**
+  82 lesson pictures cost 572 MB of room. Anything from Jugnu's media store is now fetched through this site.
+- **"The same address with a different `?…`" is not the same list.** A missing Games list was being answered with
+  the Stories list. Door lists are now answered only by a saved copy of the same question.
+- **Silent skips hide for weeks.** 126 storybook option voices asked for under names cut short (404), and a quiz
+  closed by its teacher, were being "saved" without a word. Get ready now names what it could not save and why;
+  Check this Chromebook opens everything from the device alone.
+- **A server change needs a server restart.** With an old server running, Jugnu answered the new video route with
+  a web page (`200 text/html`), and each "video" was saved as 16 KB of HTML. The worker now only saves what this
+  site's own media route answered, and never a web page.
 
 ## Licence
 

@@ -33,6 +33,13 @@
   function cache() { return caches.open(CACHE); }
   function put(key, res) { return cache().then(function (c) { return c.put(key, res); }).catch(function () {}); }
   function get(key) { return cache().then(function (c) { return c.match(key); }).catch(function () { return undefined; }); }
+  /** The same address (or body) with this Chromebook's live home link in place of an old one (block HOME of the
+   *  worker, self.cbHome): a link lasts 7 days, the worker renews it. Without that block, the text as it is. */
+  function live(text) {
+    try { return self.cbHome && self.cbHome.live ? self.cbHome.live(text).then(function (t) { return t || text; }, function () { return text; }) : Promise.resolve(text); } catch (e) { return Promise.resolve(text); }
+  }
+  /** "Check this Chromebook" (block READY) is running: nothing is sent and nothing is queued. */
+  function testing() { try { return typeof savedOnly === 'function' && savedOnly(); } catch (e) { return false; } }
   /** The network's answer, or null after WAIT_MS or when there is no network (the request is dropped then). */
   function net(req, ms) {
     var ctl = typeof AbortController === 'function' ? new AbortController() : null;
@@ -95,7 +102,9 @@
     }).catch(function () { return null; });
   }
   function content(req, u, key, kept, also) {
-    return net(req.clone()).then(function (res) {
+    return live(req.url).then(function (url) {
+      return net(url === req.url ? req.clone() : new Request(url, { headers: req.headers, credentials: 'same-origin' }));
+    }).then(function (res) {
       if (res && res.status === 200) {
         var a = res.clone(), b = also ? res.clone() : null;
         put(key, a); if (b) put(also, b);
@@ -152,15 +161,20 @@
     return keepStep(i).then(function () { return markDone(i); }).then(function () { return answerHere(i); });
   }
   function step(req, u) {
-    if (req.headers.get('x-cb-sync')) return fetch(req);   // stories.js sending a kept step
     return req.clone().text().then(function (t) {
+      // the step goes to the server under this Chromebook's live home link (a kept step may be days old)
+      return live(req.url).then(function (url) { return [t, url === req.url ? req : new Request(url, { method: 'POST', headers: req.headers, body: t, credentials: 'same-origin' })]; });
+    }).then(function (x) {
+      var t = x[0], out = x[1];
+      if (req.headers.get('x-cb-sync')) return fetch(out);   // stories.js sending a kept step
       var body = {}; try { body = JSON.parse(t || '{}') || {}; } catch (e) { body = {}; }
-      var i = { url: u.pathname, kid: String(body.kid || ''), book: String(body.book_id || ''), page: body.page_n == null ? null : Number(body.page_n), event: String(body.event || ''), body: body,
+      var i = { url: new URL(out.url).pathname, kid: String(body.kid || ''), book: String(body.book_id || ''), page: body.page_n == null ? null : Number(body.page_n), event: String(body.event || ''), body: body,
         recs: (req.headers.get('x-cb-recs') || '').split(',').filter(Boolean) };
       if (!i.recs.length) i.recs = null;
+      if (testing()) return answerHere(i);                   // the self-test: answered, never kept, never sent
       if (i.recs) return keepAndAnswer(i);                  // a reading saved on this device waits for its score
       var send = function () {
-        return net(req.clone()).then(function (res) {
+        return net(out.clone()).then(function (res) {
           if (res && res.ok) { markDone(i); return res; }
           if (res && res.status < 500 && !REFUSED[res.status]) return res;   // the server's own no (a bad step): the reader's to handle
           return keepAndAnswer(i);
@@ -171,7 +185,11 @@
     });
   }
   function speechKey(req) {
-    return net(req.clone()).then(function (res) { return res || json({ error: 'offline', offline: true }, 503); });
+    if (testing()) return Promise.resolve(json({ error: 'offline', offline: true, selftest: true }, 503));
+    // the key is asked under the live home link (the body names the link: a saved reading may be days old)
+    return req.clone().text().then(live).then(function (t) {
+      return net(new Request(req.url, { method: 'POST', headers: req.headers, body: t, credentials: 'same-origin' }));
+    }).then(function (res) { return res || json({ error: 'offline', offline: true }, 503); });
   }
 
   function status() {
