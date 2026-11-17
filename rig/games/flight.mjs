@@ -112,7 +112,15 @@ export async function playPart(page, opts = {}) {
         const btn = end.querySelector('.sae-btn, button');
         const row = [Math.round(performance.now() - t0), document.documentElement.scrollHeight, btn ? Math.round(btn.getBoundingClientRect().bottom) : null, Math.round(end.getBoundingClientRect().bottom)];
         const last = out[out.length - 1];
-        if (!last || last[1] !== row[1] || last[2] !== row[2] || last[3] !== row[3]) out.push(row);
+        if (!last || last[1] !== row[1] || last[2] !== row[2] || last[3] !== row[3]) {
+          out.push(row);
+          // what is moving: each part of the screen (top+height), and what styles the screen
+          const box = (e) => { const r = e.getBoundingClientRect(); return Math.round(r.top) + '+' + Math.round(r.height); };
+          const cs = getComputedStyle(end); const main = document.querySelector('main.sae');
+          (window.__cbEndParts = window.__cbEndParts || []).push({ ms: row[0], screen: box(end), cls: end.className, main: main ? main.className + ' ' + box(main) : '',
+            pad: cs.paddingTop + '/' + cs.paddingBottom, transform: cs.transform, zoom: end.style.zoom || '',
+            parts: [...end.querySelectorAll('.sae-body, .sae-foot, .sae-body > *, .sae-foot > *')].map((e) => (String(e.className || e.tagName).split(' ')[0] || e.tagName) + ':' + box(e)).join(' ') });
+        }
         if (performance.now() - t0 > 3000) return;
       }
       requestAnimationFrame(tick);
@@ -249,6 +257,7 @@ export async function playPart(page, opts = {}) {
       // the last screen: where its one button is on the page, and what makes the page taller than the window
       await page.waitForTimeout(3200);
       report.endSeries = await page.evaluate(() => window.__cbEndSeries || []).catch(() => []);
+      report.endParts = await page.evaluate(() => window.__cbEndParts || []).catch(() => []);
       report.endDom = await page.evaluate(() => {
         const box = (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom), Math.round(r.height)]; };
         const scr = document.querySelector('#sae-root .sae-screen'); const btn = document.querySelector('.sae-end .sae-btn, .sae-end button');
