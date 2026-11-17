@@ -138,16 +138,20 @@
       return (listened ? 1 : 0) + (read ? 1 : 0) + 1;
     });
   }
-  /** One tap on an answer, checked here as the server checks it: right or not; the answer only after a second miss. */
+  /** One tap on an answer, judged as Jugnu's server judges it (web-quiz-stories.js event(), story_answer): right or
+   *  not; the answer itself only after a second miss, and a second try needs a first one (another option, also wrong).
+   *  k: the book's saved answers {a: {question: option}, o: {question: how many options}}; d: the tap {n, i, try, first}.
+   *  A question this device has no answer for: {ok: true} alone (the reader goes on; the server counts the picks later). */
+  function judge(k, d) {
+    d = d || {};
+    var n = Number(d.n), pick = Number(d.i != null ? d.i : d.pick);
+    if (!k || !k.a || k.a[n] == null) return { ok: true };
+    var ans = Number(k.a[n]), right = pick === ans, first = d.first == null ? null : Number(d.first), opts = Number((k.o || {})[n]) || 0;
+    var second = Number(d.try) === 2 && first !== null && first < opts && first !== pick && first !== ans;
+    return Object.assign({ ok: true, right: right }, !right && second ? { show: ans } : {});
+  }
   function checkAnswer(i) {
-    var d = i.body.data || {};
-    return tx('ans', 'readonly', function (s) { return s.get(i.book); }).then(function (k) {
-      var n = Number(d.n), pick = Number(d.i != null ? d.i : d.pick);
-      if (!k || !k.a || k.a[n] == null) return json({ ok: true });   // not known on this device: the reader goes on, the picks are counted on the server later
-      var ans = Number(k.a[n]), right = pick === ans, first = d.first == null ? null : Number(d.first), opts = Number((k.o || {})[n]) || 0;
-      var second = Number(d.try) === 2 && first !== null && first < opts && first !== pick && first !== ans;
-      return json(Object.assign({ ok: true, right: right }, !right && second ? { show: ans } : {}));
-    }, function () { return json({ ok: true }); });
+    return tx('ans', 'readonly', function (s) { return s.get(i.book); }).then(function (k) { return json(judge(k, i.body.data)); }, function () { return json({ ok: true }); });
   }
   function answerHere(i) {
     if (i.event === 'story_answer') return checkAnswer(i);
@@ -248,5 +252,6 @@
       return false;
     },
     status: status,
+    _judge: judge,   // for test/stories-rules.test.mjs
   };
 }());

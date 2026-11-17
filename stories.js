@@ -402,6 +402,19 @@
     });
   }
 
+  /** One saved read heard by the speech service: its provisional part comes out of the page's numbers (every word, or
+   *  this Chromebook's own score), the speech service's goes in. d: the page's "page read" data as the page made it
+   *  (it may also hold parts that were read live); pv: {read, skipped, ms, idx}; s: {read, skipped, ms, idx, absorbed, ended}. */
+  function settle(d, pv, s) {
+    d.words_read = Math.max(0, (Number(d.words_read) || 0) - pv.read + s.read);
+    d.skipped = Math.max(0, (Number(d.skipped) || 0) - pv.skipped + s.skipped);
+    d.ms = Math.max(0, (Number(d.ms) || 0) - pv.ms + s.ms);
+    d.skipped_words = (d.skipped_words || []).filter(function (i) { return pv.idx.indexOf(i) < 0; }).concat(s.idx);
+    if (s.absorbed) d.absorbed = (Number(d.absorbed) || 0) + s.absorbed;
+    d.ended = s.ended;
+    return d;
+  }
+
   /** A saved "page read" with its real numbers. → {body} | {wait: why} | {drop: why} */
   function scored(ev) {
     return Promise.all(ev.recs.map(function (id) { return getOne('rec', id); })).then(function (rows) {
@@ -428,12 +441,7 @@
               return hear(LR, k.body, row).then(function (s) {
                 // this read's provisional part (every word, or this Chromebook's own score) comes out, the speech service's goes in
                 var pv = row.prov || { read: row.n, skipped: 0, ms: row.ms_prov || 0, idx: [] };
-                d.words_read = Math.max(0, (Number(d.words_read) || 0) - pv.read + s.read);
-                d.skipped = Math.max(0, (Number(d.skipped) || 0) - pv.skipped + s.skipped);
-                d.ms = Math.max(0, (Number(d.ms) || 0) - pv.ms + s.ms);
-                d.skipped_words = d.skipped_words.filter(function (i) { return pv.idx.indexOf(i) < 0; }).concat(s.idx);
-                if (s.absorbed) d.absorbed = (Number(d.absorbed) || 0) + s.absorbed;
-                d.ended = s.ended;
+                settle(d, pv, s);
                 out.push(Object.assign({ read: s.read, total: s.total, ms: s.ms, kb: Math.round(row.blob.size / 1024), lag_s: Math.round((Date.now() - row.at) / 1000) }, pv.device ? { on_device: pv.read, engine: pv.device } : {}));
                 return null;
               }, function (e) {
@@ -531,7 +539,7 @@
     });
   }
 
-  window.__cbStories = { sync: sync, status: status };
+  window.__cbStories = { sync: sync, status: status, _settle: settle };
   window.addEventListener('online', function () { setTimeout(sync, 1500); });
   if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', function (e) { if (e.data && e.data.type === 'cb-stories-sync') setTimeout(sync, 800); });
   setTimeout(sync, 2500);
