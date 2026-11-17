@@ -477,7 +477,8 @@
                 if (s.heard) heard.push({ book: ev.book, page: ev.page, read: s.body.data.words_read, total: s.body.data.words_total, ms: s.body.data.ms, parts: s.heard });
                 // what the server made of the book once its steps were in (its own count of the child's reading)
                 if (ev.event === 'story_done' || ev.event === 'story_questions_done') said.push({ event: ev.event, book: ev.book, server: r.body });
-                return gone();
+                // a steady pace: Jugnu takes 200 story steps a minute from one child's link
+                return gone().then(function () { return new Promise(function (ok) { setTimeout(ok, 350); }); });
               }
               if (r.status === 400 || r.status === 404) { dropped.push({ event: ev.event, book: ev.book, page: ev.page, why: 'server_' + r.status + '_' + String(r.body.error || '') }); return gone(); }
               held[k] = 'server_' + r.status;
