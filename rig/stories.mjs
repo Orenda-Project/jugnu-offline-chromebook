@@ -276,12 +276,13 @@ try {
             if (x.screen === 'story-done') return x;
             if (x.screen === 'story-wait') return x;   // the last answer was right: the done screen is on its way
             // the next question's dot is lit (a page being redrawn has no dots for a moment: that is not "the next one")
-            if (x.screen === 'story-questions') { const dots = await page.evaluate(() => [...document.querySelectorAll('.wqs-dots i')].findIndex((e) => e.className === 'wqs-now')); if (dots > q) return x; if (/It was|جواب یہ ہے/.test(x.text)) return x; }
+            // or, after a second miss, the answer is shown with its own Next button (a question's own words may say "It was")
+            if (x.screen === 'story-questions') { const dots = await page.evaluate(() => [...document.querySelectorAll('.wqs-dots i')].findIndex((e) => e.className === 'wqs-now')); if (dots > q) return x; if (await page.locator('[data-tap="qnext"]').count()) return { ...x, shown: true }; }
             return null;
           }, 9000);
           if (!nx) { Q.problem = 'no answer to the tap'; break; }
           if (nx.screen === 'story-look') { Q.look_back = true; await sleep(400); await tap('[data-tap="lret"]'); await sleep(400); continue; }
-          if (/It was|جواب یہ ہے/.test(nx.text) && nx.screen === 'story-questions') { Q.shown = true; await tap('[data-tap="qnext"]'); await sleep(300); }
+          if (nx.shown) { Q.shown = true; await tap('[data-tap="qnext"]'); await sleep(300); }
           break;
         }
         Q.answers = net.slice(k0).filter((e) => e.event === 'story_answer').map((e) => `${e.status}${e.local ? ' local' : ''} ${e.res.replace(/"ok":true,?/, '')}`);
