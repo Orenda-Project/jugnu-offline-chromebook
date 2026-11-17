@@ -89,7 +89,7 @@ async function challenge(k, off) {
     const g = await playGame(k.page, { href: r.href, lang: k.lang, say: k.say, mic: k.mic, tag: `mx-${k.key}-${String(r.item).replace(/\W/g, '_')}${off ? '-off' : ''}`, maxMs: 6 * 60000 });
     // a reading with no network: its feedback is made on the device, under the page's own card
     let device = null;
-    if (off && g.screens.some((x) => /^read-live/.test(String(x)))) {
+    if (off && g.screens.some((x) => /^read-(live|rec)/.test(String(x)))) {
       const res = await k.page.waitForFunction(() => window.__cbReadResult || null, null, { timeout: 200000, polling: 1000 }).then((h) => h.jsonValue(), () => 'not scored within 200 s');
       const boxes = await k.page.evaluate(() => [...document.querySelectorAll('[data-cb-read]')].map((b) => ({ state: b.getAttribute('data-cb-read'), stars: b.getAttribute('data-stars'), lit: b.querySelectorAll('[data-read="1"]').length, words: b.querySelectorAll('[data-read]').length, wpm: /per minute|a minute|فی منٹ/.test(b.innerText) }))).catch(() => []);
       device = { result: res, boxes };

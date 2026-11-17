@@ -126,7 +126,7 @@ export async function playGame(page, opts = {}) {
   }
   // a reading goes up after its card is drawn (the page uploads the recording, then posts the result): a child stays
   // on the card that long, so the rig does too, before it leaves the page
-  if (ended && report.screens.some((x) => /^read-live/.test(String(x)))) {
+  if (ended && report.screens.some((x) => /^read-(live|rec)/.test(String(x)))) {
     const u0 = Date.now();
     while (!report.posts.some((x) => x.p === 'ch/upload') && Date.now() - u0 < 25000) await page.waitForTimeout(500);
   }

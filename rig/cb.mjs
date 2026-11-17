@@ -15,17 +15,27 @@ export const SHOTS = path.join(ROOT, 'shots');
 fs.mkdirSync(SHOTS, { recursive: true });
 export const UA = 'Mozilla/5.0 (X11; CrOS x86_64 16328.55.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
-export async function launch({ fresh = false } = {}) {
-  const profile = path.join(ROOT, '.chrome-profile');
+/**
+ * speech: a 16-bit PCM .wav the fake microphone plays (once, from the moment a page opens the microphone), so a
+ *   read-aloud is graded on real words. Without it the fake microphone is Chrome's beep. (Also CB_SPEECH=<file.wav>.)
+ * autoplay: false keeps Chrome's own autoplay rule (sound only after a tap), as on a child's Chromebook.
+ * height: the page's height; a school Chromebook gives a page 1366x633 (CB_HEIGHT=633).
+ */
+export async function launch({ fresh = false, speech = process.env.CB_SPEECH || null, autoplay = !process.env.CB_NO_AUTOPLAY, height = Number(process.env.CB_HEIGHT) || 768 } = {}) {
+  // CB_PROFILE: a second profile (a second "device") beside the default one, e.g. for another service address.
+  const profile = path.join(ROOT, process.env.CB_PROFILE || '.chrome-profile');
   if (fresh) fs.rmSync(profile, { recursive: true, force: true });
+  const args = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
+  if (autoplay) args.push('--autoplay-policy=no-user-gesture-required');
+  if (speech) args.push(`--use-file-for-fake-audio-capture=${path.resolve(speech)}%noloop`);
   const ctx = await chromium.launchPersistentContext(profile, {
     channel: 'chrome',
     headless: process.env.CB_HEADED ? false : true,
-    viewport: { width: 1366, height: 768 },
+    viewport: { width: 1366, height },
     userAgent: UA,
     locale: 'en-PK',
     permissions: ['microphone'],
-    args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+    args,
   });
   const page = ctx.pages()[0] || (await ctx.newPage());
   const log = [];

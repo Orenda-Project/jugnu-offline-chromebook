@@ -5,3 +5,4 @@ shots/
 OFFLINE
 cb-config.json
 .env
+.chrome-profile-*/
