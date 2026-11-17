@@ -3,10 +3,18 @@
  * Behind the Videos door each lesson is a video (3-15 MB, a signed link on another site, good for 6 hours) followed by
  * its quiz. For every class ticked on the start page this saves, lesson by lesson:
  *   - the door's own lists (subjects, then each subject's lessons), in English and Urdu
- *   - the lesson's page (/q/<code>?k=…&via=videos), which carries the quiz; a lesson that has no page yet gets one
- *     (POST /api/wq/videos/start, what a child's first tap does)
+ *   - the lesson, the way Jugnu gives it to this child. A lesson the list names no page for is started (POST
+ *     /api/wq/videos/start, what a child's first tap does) and Jugnu answers one of two things:
+ *       {code, k}  a child with a class code: the lesson's page (/q/<code>?k=…&via=videos), which carries the quiz
+ *       {watch}    a child with none: the video alone, played in the home itself
  *   - the video itself, whole, through this site (so it can be played and scrubbed from the saved copy)
- *   - the lesson's picture and the voice clips of its quiz
+ *   - the lesson's picture, and with a page the voice clips of its quiz
+ *   - a record of the lesson on the drive (the worker's /__cb/watch/<vid>): where its video is, its picture, its
+ *     name. The record is what "saved" means: next time a lesson is whole when its record, its video and (with a
+ *     page) its page and clips are all on the drive, whatever today's list says. And with no network the worker
+ *     plays a saved lesson from it whichever way the list points (pilot-sw.js: A LESSON AS A VIDEO ALONE).
+ *     Which of the two a child gets changes: Jugnu looks at the child's 18 newest quiz codes, and the lesson pages
+ *     read here push the class quiz out of that view (18 Nov 2026: Classes 1 to 4 came as pages, Class 5 as videos).
  * A class is saved only if this Chromebook has room for all of it (it says how much is needed and how much there is).
  * It runs after "Ready" is said (late), carries on where it stopped, and never saves a lesson twice.
  *
@@ -46,7 +54,7 @@
   function lessonsOf(list, subject) {
     var out = [];
     ((list && list.chapters) || []).forEach(function (c) {
-      (c.videos || []).forEach(function (v) { out.push({ vid: v.vid, title: v.title || '', mb: v.mb || 0, code: v.code || null, k: v.k || null, thumb: v.thumb || null, poster: v.poster || null, art: c.art || null, subject: subject }); });
+      (c.videos || []).forEach(function (v) { out.push({ vid: v.vid, title: v.title || '', secs: v.secs || 0, mb: v.mb || 0, code: v.code || null, k: v.k || null, thumb: v.thumb || null, poster: v.poster || null, art: c.art || null, subject: subject }); });
     });
     return out;
   }
@@ -94,44 +102,70 @@
       var subjects = ((await json(libUrl(ctx.hub, ctx.kid, 'en', g))).subjects || []).map(function (s) { return s.key; });
       var lessons = [];
       for (var si = 0; si < subjects.length; si += 1) lessons = lessons.concat(lessonsOf(await json(libUrl(ctx.hub, ctx.kid, 'en', g, subjects[si])), subjects[si]));
-      // 2. a page for each lesson that has none yet (a child's first tap makes it; here it is made ahead)
-      var bare = lessons.filter(function (v) { return !v.code; });
-      for (var bi = 0; bi < bare.length; bi += 1) {
-        ctx.setPct(null, label + ': preparing lesson pages, ' + (bi + 1) + ' of ' + bare.length);
-        var made = await fetch('/api/wq/videos/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hub: ctx.hub, kid: ctx.kid, vid: bare[bi].vid }) }).then(function (r) { return r.ok ? r.json() : {}; }, function () { return {}; });
-        if (made.code && made.k) { bare[bi].code = made.code; bare[bi].k = made.k; }
-      }
-      // 3. the lists as the door will ask for them, both languages (they now name every lesson's page), and the
-      //    lessons' pictures: named here, saved in 7, once every lesson of the class is on the drive
+      // 2. the lists as the door will ask for them, both languages, and the lessons' pictures: named here, saved in
+      //    7, once every lesson of the class is on the drive
       var lists = [];
       (g === own ? [g, null] : [g]).forEach(function (as) {
         LANGS.forEach(function (l) { lists.push(libUrl(ctx.hub, ctx.kid, l, as)); subjects.forEach(function (s) { lists.push(libUrl(ctx.hub, ctx.kid, l, as, s)); }); });
       });
       var pics = [];
       lessons.forEach(function (v) { [v.thumb, v.poster, v.art].forEach(function (u) { if (u && pics.indexOf(u) < 0) pics.push(u); }); });
-      // 4. MEASURE, lesson by lesson (six at a time): its page, the video it names, and that video's real length: the
-      //    file on the drive when it is kept, else its length on the server, asked for with one byte (the worker's
-      //    `size`). A lesson this step saved before is checked against the drive here too: if its page, its video or
-      //    a clip has gone, it is saved again.
-      var have = lsJson('cb-videos-' + g, []), measured = 0;
+      // 3. WHAT IS HERE ALREADY (six at a time). A lesson is whole when its record is on the drive, the video the
+      //    record names is on the drive, and, for a lesson with a page, the page and every quiz clip it names are
+      //    too. Today's list is not asked: it names a page or not as Jugnu sees the child today.
+      var measured = 0;
+      var recUrl = function (vid) { return ctx.abs('/__cb/watch/' + encodeURIComponent(vid)); };
+      var tick = function (what) { measured += 1; if (measured % 6 === 0 || measured === lessons.length) ctx.setPct(null, label + ': ' + what + ', ' + measured + ' of ' + lessons.length); };
       await pool(lessons, 6, async function (v) {
-        var at = have.indexOf(v.vid), was = at >= 0;
-        v.bytes = null; v.onDrive = false; v.clipBytes = 0; v.m = null;
+        v.bytes = null; v.onDrive = false; v.clipBytes = 0; v.m = null; v.whole = false; v.files = [];
+        var txt = await ctx.ask({ type: 'kept-text', url: recUrl(v.vid) }, 15000);
+        var rec = null; try { rec = txt ? JSON.parse(txt) : null; } catch (e) { rec = null; }
+        if (rec && rec.url) {
+          var clips = [], html = rec.page ? await ctx.ask({ type: 'kept-text', url: ctx.abs(rec.page) }, 15000) : null;
+          if (rec.page && html) clips = mediaOf(html).clips;
+          if (!rec.page || html) {
+            var here = await ctx.ask({ type: 'size', urls: [rec.url].concat(clips) }, 90000);
+            if (Array.isArray(here) && here.length && here.every(function (x) { return x && x.kept; })) {
+              v.whole = true; v.onDrive = true; v.bytes = here[0].bytes; v.clipBytes = sum(here.slice(1), function (x) { return x.bytes; });
+              v.files = [rec.url].concat(clips, rec.page ? [ctx.abs(rec.page)] : [], [recUrl(v.vid)]);
+            }
+          }
+        }
+        tick('looking at what is saved');
+      });
+      var have = lessons.filter(function (v) { return v.whole; }).map(function (v) { return v.vid; });
+      var rest = lessons.filter(function (v) { return !v.whole; });
+      // 4. the rest. A lesson the list names no page for is started, as a child's first tap does (a lesson that is
+      //    whole is never started again: Jugnu counts a start as the child watching).
+      var startLesson = function (v) {
+        return fetch('/api/wq/videos/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hub: ctx.hub, kid: ctx.kid, vid: v.vid }) })
+          .then(function (r) { return r.ok ? r.json() : {}; }, function () { return {}; }).then(function (j) { return j || {}; });
+      };
+      var watchMedia = function (w) { return { video: [w.url], clips: [], pics: w.poster ? [w.poster] : [] }; };
+      var bare = rest.filter(function (v) { return !v.code; });
+      for (var bi = 0; bi < bare.length; bi += 1) {
+        ctx.setPct(null, label + ': preparing lessons, ' + (bi + 1) + ' of ' + bare.length);
+        var made = await startLesson(bare[bi]);
+        if (made.code && made.k) { bare[bi].code = made.code; bare[bi].k = made.k; } else if (made.watch && made.watch.url) bare[bi].watch = made.watch;
+      }
+      // 5. MEASURE each of them (six at a time): the video it names (on its page, or in the start's answer) and that
+      //    video's real length: the file on the drive when it is there, else its length on the server, asked for
+      //    with one byte (the worker's `size`).
+      measured = have.length;
+      await pool(rest, 6, async function (v) {
+        var m = null;
         if (v.code && v.k) {
-          var html = was ? await ctx.ask({ type: 'kept-text', url: ctx.abs(pageUrl(v)) }, 15000) : null;
-          if (!html) { html = await page(v); if (!html) { await ctx.waitOnline(); html = await page(v); } }
-          var m = html ? mediaOf(html) : null;
-          if (m && m.video.length) {
-            v.m = m;
-            var sz = await ctx.ask({ type: 'size', urls: m.video.slice(0, 1).concat(was ? m.clips : []) }, 90000);
-            if (Array.isArray(sz) && sz[0]) { v.bytes = sz[0].bytes; v.onDrive = !!sz[0].kept; }
-            if (was && Array.isArray(sz) && sz.every(function (x) { return x && x.kept; })) v.clipBytes = sum(sz.slice(1), function (x) { return x.bytes; });
-            else if (was) was = false;
-          } else was = false;
-        } else was = false;
-        if (!was && at >= 0) have.splice(have.indexOf(v.vid), 1);
-        measured += 1;
-        if (measured % 6 === 0 || measured === lessons.length) ctx.setPct(null, label + ': measuring lessons, ' + measured + ' of ' + lessons.length);
+          var html = await page(v);
+          if (!html) { await ctx.waitOnline(); html = await page(v); }
+          m = html ? mediaOf(html) : null;
+          if (m && !m.video.length) m = null;
+        } else if (v.watch) m = watchMedia(v.watch);
+        if (m) {
+          v.m = m;
+          var sz = await ctx.ask({ type: 'size', urls: m.video.slice(0, 1) }, 90000);
+          if (Array.isArray(sz) && sz[0]) { v.bytes = sz[0].bytes; v.onDrive = !!sz[0].kept; }
+        }
+        tick('measuring lessons');
       });
       localStorage.setItem('cb-videos-' + g, JSON.stringify(have));
       // A length that could not be read (the server did not answer): the list's own size if it has one, else the
@@ -150,41 +184,57 @@
         summary[g] = { n: lessons.length, saved: have.length, mb: Math.round(k.video / 1e6), clips_mb: Math.round(k.clips / 1e6), of_mb: Math.round(total / 1e6) };
         if (why) summary[g].why = why;
       };
-      // 5. room for the whole class? What is still to fetch: each video not on the drive at its real length, about
+      // 6. room for the whole class? What is still to fetch: each video not on the drive at its real length, about
       //    1.3 MB a lesson for its quiz voices and page (measured: 1.05 MB), and a reserve that is never used.
+      //    (A lesson whose video is on the drive already, saved by this step as it was before, costs nothing.)
       //    The browser itself is asked whether that many bytes fit (ctx.fits): what navigator.storage.estimate()
       //    calls free is "10 GB" on every Chromebook, whatever its drive holds. Only a browser that cannot be asked is
       //    judged by the estimate.
       var left = lessons.filter(function (v) { return have.indexOf(v.vid) < 0; });
-      var need = sum(left, function (v) { return v.onDrive ? 0 : v.bytes; }) + CLIPS * left.length + RESERVE;
+      var toFetch = left.filter(function (v) { return !v.onDrive; });
+      var need = toFetch.length ? sum(toFetch, function (v) { return v.bytes; }) + CLIPS * toFetch.length + RESERVE : 0;
       var sp = await ctx.space();
-      var fit = left.length && typeof ctx.fits === 'function' ? await ctx.fits(need) : null;
+      var fit = toFetch.length && typeof ctx.fits === 'function' ? await ctx.fits(need) : null;
       var room = sp.room != null ? sp.room : sp.free;
-      if (left.length && (fit === false || (fit == null && sp.free != null && need > sp.free))) {
+      if (toFetch.length && (fit === false || (fit == null && sp.free != null && need > sp.free))) {
         // Not started: nothing of a class that does not fit is fetched. The next class may be smaller and fit.
         problems.push(name + ' needs ' + mb(need / 1e6) + ', this Chromebook has room for ' + mb(room / 1e6));
         record('no room'); ctx.note('cb-videos', summary);
         ctx.log('lesson videos, ' + name + ': not saved: it needs ' + mb(need / 1e6) + ' (' + left.length + ' lessons, ' + mb(sum(left, function (v) { return v.bytes; }) / 1e6) + ' of video) and this Chromebook has room for ' + mb(room / 1e6));
         continue;
       }
-      // 6. lesson by lesson (three at a time): its page, its video, its pictures, its quiz clips
+      // 7. lesson by lesson (three at a time): its page (when it has one), its video, its pictures, its quiz clips,
+      //    and last its record: a lesson with a record on the drive is a lesson that is whole
       var stopped = false;
+      var lasting = function (u) { return u && /^https?:/.test(u) ? u.split('?')[0] : u || null; }; // (a signed link runs out in hours)
+      var recOf = function (v) {
+        var w = v.watch || {};
+        var rec = { vid: v.vid, url: lasting(v.m.video[0]), poster: lasting(w.poster || v.poster || v.thumb), secs: w.secs || v.secs || 0, title: w.title || v.title || '', lang: w.lang || 'en', after: false };
+        if (w.title_ur) rec.title_ur = w.title_ur;
+        if (v.code && v.k) rec.page = pageUrl(v);
+        return rec;
+      };
       var saveOne = async function (v, m) {
-        var r1 = await ctx.warm([ctx.abs(pageUrl(v))].concat(m.pics), { readable: true, each: quiet.each });
+        var first = (v.code && v.k ? [ctx.abs(pageUrl(v))] : []).concat(m.pics);
+        var r1 = first.length ? await ctx.warm(first, { readable: true, each: quiet.each }) : { failed: [] };
         // the video and its ~90 small quiz clips side by side (the clips are many and tiny: six at a time)
-        var both = await Promise.all([ctx.warm(m.video, { readable: true, lanes: 1, each: quiet.each }), ctx.warm(m.clips, { readable: true, lanes: 6, batch: 30, each: quiet.each })]);
-        return !r1.failed.length && !both[0].failed.length && !both[0].gone.length && !both[1].failed.length;
+        var both = await Promise.all([ctx.warm(m.video, { readable: true, lanes: 1, each: quiet.each }), m.clips.length ? ctx.warm(m.clips, { readable: true, lanes: 6, batch: 30, each: quiet.each }) : { failed: [] }]);
+        if (r1.failed.length || both[0].failed.length || (both[0].gone || []).length || both[1].failed.length) return false;
+        return (await ctx.ask({ type: 'watch-keep', recs: [recOf(v)] }, 15000)) === 1;
       };
       var one = async function (v) {
-        if (!v.code || !v.k || !v.m) return false;
+        if (!v.m) return false;
         var ok = await saveOne(v, v.m);
         if (!ok && !ctx.isFull()) {
-          // its links may have run out since they were read (they last 6 hours): the page again, fresh links, once
+          // its links may have run out since they were read (they last 6 hours): fresh links, once
           await ctx.waitOnline();
-          var html = await page(v), m = html ? mediaOf(html) : null;
-          if (m && m.video.length) { v.m = m; ok = await saveOne(v, m); }
+          var m = null;
+          if (v.code && v.k) { var html = await page(v); m = html ? mediaOf(html) : null; if (m && !m.video.length) m = null; }
+          else { var again = await startLesson(v); if (again.watch && again.watch.url) { v.watch = again.watch; m = watchMedia(again.watch); } }
+          if (m) { v.m = m; ok = await saveOne(v, m); }
         }
         if (!ok) return false;
+        v.files = v.m.video.concat(v.m.clips, v.code && v.k ? [ctx.abs(pageUrl(v))] : [], [recUrl(v.vid)]);
         // what is now on the drive, read back from the drive
         var sz = await ctx.ask({ type: 'size', urls: v.m.video.slice(0, 1).concat(v.m.clips) }, 90000);
         if (!Array.isArray(sz) || !sz[0] || !sz[0].kept) return false;
@@ -210,7 +260,7 @@
         // full the drive is). A class is kept whole or not at all: what was kept of this one is taken off again, and
         // no further class is started.
         var gone = [];
-        lessons.forEach(function (v) { if (v.m) gone = gone.concat([ctx.abs(pageUrl(v))], v.m.video, v.m.clips); });
+        lessons.forEach(function (v) { gone = gone.concat(v.files || []); if (v.m) gone = gone.concat(v.m.video, v.m.clips, v.code && v.k ? [ctx.abs(pageUrl(v))] : [], [recUrl(v.vid)]); });
         if (typeof ctx.forget === 'function') await ctx.forget(gone);
         have = [];
         localStorage.setItem('cb-videos-' + g, '[]');
@@ -219,7 +269,7 @@
         ctx.log('lesson videos, ' + name + ': the drive filled up while saving it; what was saved of it has been taken off again');
         break;
       }
-      // 7. the class is whole: its lists (saved afresh) and pictures go on the drive, so the Videos door shows it with
+      // 8. the class is whole: its lists (saved afresh) and pictures go on the drive, so the Videos door shows it with
       //    no network. A class that is not whole leaves no list of lessons that would not play.
       if (have.length === lessons.length) {
         await ctx.warm(lists.map(ctx.abs), { fresh: true, each: quiet.each });
@@ -230,7 +280,7 @@
       var fetchedNow = left.filter(function (v) { return have.indexOf(v.vid) >= 0; }).length;
       var mins = Math.round((Date.now() - began) / 6000) / 10;
       ctx.log('lesson videos, ' + name + ': ' + have.length + ' of ' + lessons.length + ' lessons on this Chromebook (' + mb(summary[g].mb) + ' of video, ' + mb(summary[g].clips_mb) + ' of quiz voices)' +
-        (fetchedNow ? '; ' + fetchedNow + ' saved now in ' + mins + ' min' : '; all were here already'));
+        (fetchedNow ? '; ' + fetchedNow + ' saved now in ' + mins + ' min' : have.length === lessons.length ? '; all were here already' : ''));
     }
     if (problems.length) throw new Error(problems.join('; '));
     return want.map(function (g) { return 'Class ' + g + ': ' + summary[g].saved + ' lessons, ' + mb(summary[g].mb); }).join('; ');
@@ -258,12 +308,17 @@
       for (var i = 0; i < lessons.length; i += 1) {
         var v = lessons[i], name = v.subject + ': ' + v.title;
         t.say(group + ': lesson ' + (i + 1) + ' of ' + lessons.length + '…');
-        if (!v.code || !v.k) { rows.push({ group: group, name: name, ok: false, why: 'no lesson page was made' }); continue; }
-        var html = await t.read(pageUrl(v));
-        if (!html) { rows.push({ group: group, name: name, ok: false, why: 'its page is not saved' }); continue; }
-        var m = mediaOf(html);
-        if (!m.video.length) { rows.push({ group: group, name: name, ok: false, why: 'its page names no video' }); continue; }
-        var played = await t.media(name, m.video[0], 'video');
+        // the lesson's record on the drive says where its video is, and whether it has a page (with its quiz)
+        var txt = await t.read('/__cb/watch/' + encodeURIComponent(v.vid)), rec = null;
+        try { rec = txt ? JSON.parse(txt) : null; } catch (e) { rec = null; }
+        if (!rec || !rec.url) { rows.push({ group: group, name: name, ok: false, why: 'not saved (no record of it on this Chromebook)' }); continue; }
+        var m = { clips: [] };
+        if (rec.page) {
+          var html = await t.read(rec.page);
+          if (!html) { rows.push({ group: group, name: name, ok: false, why: 'its page is not saved' }); continue; }
+          m = mediaOf(html);
+        }
+        var played = await t.media(name, rec.url, 'video');
         var clips = m.clips.length ? await t.have(m.clips) : [];
         var gone = (clips || []).filter(function (x) { return !x; }).length;
         rows.push({ group: group, name: name, ok: played.ok && !gone, why: !played.ok ? 'the video ' + (played.why || 'did not open') : gone ? gone + ' of ' + m.clips.length + ' quiz clips missing' : '' });

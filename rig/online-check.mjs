@@ -93,10 +93,10 @@ const lessonAt = async (idx) => {
   const card = page.locator('.wq-vcard').nth(idx);
   const title = (await card.innerText().catch(() => '')).replace(/\s+/g, ' ').replace(/^\d+ min /, '').replace(/ Quiz$/, '').slice(0, 40);
   await card.locator('.wq-vtap').first().click({ timeout: 10000 });
-  await page.waitForSelector('video.wq-video', { timeout: 30000 }).catch(() => {});
+  await page.waitForSelector('video.wq-video, video.wq-vid', { timeout: 30000 }).catch(() => {}); // (a lesson page's player, or the home's own: a lesson as a video alone)
   const url = page.url().replace(BASE, '');
   const r = await page.evaluate(async () => {
-    const v = document.querySelector('video.wq-video');
+    const v = document.querySelector('video.wq-video, video.wq-vid');
     if (!v) return { err: 'no player: ' + document.body.innerText.replace(/\s+/g, ' ').slice(0, 80) };
     const wait = (fn, ms) => new Promise((ok) => { const t0 = Date.now(); const tick = () => (fn() ? ok(Date.now() - t0) : Date.now() - t0 > ms ? ok(-1) : setTimeout(tick, 100)); tick(); });
     v.muted = true;

@@ -402,6 +402,7 @@ function homeGet(req, u) {
 /** A POST that names a home link, in its address or its body. */
 function homePost(req) {
   // READY (self-test): nothing is sent and nothing is queued; a saved answer is given, else a plain "offline"
+  if (savedOnly() && new URL(req.url).pathname === WATCH_PATH) return watchStart(req); // VIDEOS: the saved lesson
   if (savedOnly()) return bodyKey(req).then(kept).then(function (hit) { return hit || json({ ok: false, offline: true, selftest: true }, 503); });
   return req.clone().text().then(function (body) {
     var tokens = homeTokens(new URL(req.url).pathname + ' ' + body);
@@ -606,6 +607,69 @@ function videoSave(url, fresh) {
  * with a one-byte range through this site (the total rides in Content-Range; nothing is downloaded). {bytes, kept};
  * bytes null when neither could be read. Jugnu's lists carry a size only for lessons it looked at lately, so the
  * videos step measures here before it decides whether a class fits, and reports what was really kept. */
+/* A LESSON AS A VIDEO ALONE ("watch"), and a lesson whose page the list no longer names (lane/home, 18 Nov 2026).
+ * The Videos door opens a lesson two ways. A child with a class code: the list names the lesson's page
+ * (/q/<code>?k=…), or POST /api/wq/videos/start answers {code, k}. A child with none: the start answers
+ * {watch: {vid, url, poster, …}} and the door plays the video in the home itself. Which way it goes is Jugnu's choice
+ * at that moment (it looks at the child's 18 newest quiz codes), so it changes under a saved class.
+ * Get ready leaves a record per saved lesson (/__cb/watch/<vid>: where its video is, its picture, its name). With no
+ * network:
+ *   - a start gets Jugnu's own earlier answer when that leads to a page on the drive; otherwise the record, as
+ *     {watch}: the saved video plays. A lesson with no record is told there is no network. The quiz after a video
+ *     alone ({after: 1}) is made by the server, so it is not offered from the drive.
+ *   - a saved list names only the lesson pages that are on the drive; the others are started, as above.
+ * With a network nothing here is touched: the server answers. */
+var WATCH_PATH = '/api/wq/videos/start';
+var LIB_RX = /^\/api\/wq\/lib\/h\//;
+function watchKey(vid) { return new URL('/__cb/watch/' + encodeURIComponent(vid), self.location.origin).toString(); }
+function lessonPageKey(code, k) { return homeKey(self.location.origin + '/q/' + encodeURIComponent(code) + '?k=' + encodeURIComponent(k || '') + '&via=videos'); }
+function watchKeep(recs) {
+  return caches.open(KEEP).then(function (c) {
+    return Promise.all(recs.filter(function (r) { return r && typeof r.vid === 'string' && typeof r.url === 'string'; }).map(function (r) {
+      return c.put(watchKey(r.vid), new Response(JSON.stringify(r), { headers: { 'Content-Type': 'application/json' } })).then(function () { return 1; });
+    }));
+  }).then(function (done) { keptN = null; return done.length; });
+}
+function watchNoNet(req, body, res) {
+  return bodyKey(req).then(kept).then(function (hit) {
+    return (hit ? hit.clone().json().catch(function () { return null; }) : Promise.resolve(null)).then(function (j) {
+      return (j && j.code ? kept(lessonPageKey(j.code, j.k)) : Promise.resolve(null)).then(function (page) {
+        if (hit && page) return hit; // the lesson with its quiz
+        var rec = body && typeof body.vid === 'string' && !body.after ? kept(watchKey(body.vid)) : Promise.resolve(null);
+        return rec.then(function (r) { return r ? r.json() : null; }).then(function (w) {
+          if (w) return new Response(JSON.stringify({ watch: w }), { status: 200, headers: { 'Content-Type': 'application/json', 'X-CB-Local': '1' } });
+          if (hit && !(j && j.code)) return hit; // Jugnu's own earlier {watch}
+          miss(req, 'post_offline');
+          return res || json({ ok: false, offline: true }, 503);
+        });
+      });
+    });
+  }).catch(function () { return res || json({ ok: false, offline: true }, 503); });
+}
+function watchStart(req) {
+  return req.clone().text().then(function (t) {
+    var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) {}
+    if (savedOnly()) return watchNoNet(req, body, json({ ok: false, offline: true, selftest: true }, 503));
+    return fetch(req.clone()).then(function (res) {
+      if (res.status >= 500) return watchNoNet(req, body, res);
+      if (res.ok && /json/.test(res.headers.get('Content-Type') || '')) { var copy = res.clone(); bodyKey(req).then(function (key) { keep(key, copy); }); }
+      return res;
+    }, function () { return watchNoNet(req, body, null); });
+  });
+}
+/** A saved list of lessons, given out with no network: it names only the lesson pages that are on the drive. */
+function videoListFit(res) {
+  var noNet = (self.navigator && self.navigator.onLine === false) || netLast === 'down' || savedOnly();
+  if (!res || !res.ok || !noNet) return Promise.resolve(res);
+  return res.clone().json().then(function (j) {
+    var rows = [];
+    ((j && j.chapters) || []).forEach(function (c) { (c.videos || []).forEach(function (v) { if (v && v.code) rows.push(v); }); });
+    if (!rows.length) return res;
+    return Promise.all(rows.map(function (v) { return kept(lessonPageKey(v.code, v.k)).then(function (hit) { if (!hit) { delete v.code; delete v.k; } }); }))
+      .then(function () { return new Response(JSON.stringify(j), { status: 200, headers: { 'Content-Type': 'application/json' } }); });
+  }).catch(function () { return res; });
+}
+
 function videoSize(url) {
   var key;
   try { key = videoKeyOf(url); } catch (e) { return Promise.resolve({ bytes: null, kept: false }); }
@@ -718,6 +782,11 @@ function readyMessage(d, port, e) {
     }).then(function (done) { keptN = null; reply(done.filter(Boolean).length); }, function () { reply(null); }));
     return true;
   }
+  // a record per saved lesson (VIDEOS: a lesson as a video alone)
+  if (d.type === 'watch-keep' && Array.isArray(d.recs)) {
+    e.waitUntil(watchKeep(d.recs).then(reply, function () { reply(null); }));
+    return true;
+  }
   // how big each media file is, on the drive or on the server (videoSize); eight at a time
   if (d.type === 'size' && Array.isArray(d.urls)) {
     var sizes = new Array(d.urls.length), at = 0;
@@ -821,6 +890,7 @@ function syncOne(r) {
 
 function post(req) {
   var path = new URL(req.url).pathname;
+  if (path === WATCH_PATH) return watchStart(req); // VIDEOS (lane/home): with no network, the saved lesson
   if (path === '/__cb/identity' || path === '/__cb/added') {
     return req.clone().text().then(function (body) {
       return fetch(req.clone()).then(function (res) {
@@ -1325,8 +1395,10 @@ self.addEventListener('fetch', function (e) {
   // HOME (lane/home): a request that names a child home link gets this Chromebook's live link (or its saved copy)
   if (req.method === 'POST' && u.origin === self.location.origin) { e.respondWith(homePost(req)); return; }
   if (req.method !== 'GET') { if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } return; } // READY: self-test
-  if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(homeGet(req, u)); return; }
+  // (VIDEOS: a saved list of lessons, given out with no network, names only the lesson pages on the drive: videoListFit)
+  if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(LIB_RX.test(u.pathname) ? homeGet(req, u).then(videoListFit) : homeGet(req, u)); return; }
   var key = keyFor(req);
+  if (u.origin === self.location.origin && LIB_RX.test(u.pathname)) { e.respondWith(networkFirst(req, key).then(videoListFit)); return; }
   if (MEDIA_RX.test(u.pathname)) { e.respondWith(media(req, key)); return; }
   if (u.origin !== self.location.origin && req.destination !== 'image' && req.destination !== 'font' && req.destination !== 'style' && req.destination !== 'script') {
     if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } // READY (lane/home): the self-test reaches no network
