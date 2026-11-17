@@ -79,13 +79,19 @@
     }
   }
   // A "key" that opens no stream: the live reader runs as always, its words go nowhere, the read ends on "I'm done".
+  // A real stream is watched: when it was opened, and when words last came back on it (see "deaf" below).
+  var live = null;      // the read on screen
   hook('WQLive', function (W) {
     var open0 = W.open;
     W.open = function (o) {
       if (o && o.api_key === LOCAL_KEY) return { send: noop, finish: function (cb) { cb(); }, state: function () { return 'open'; } };
-      return open0.apply(this, arguments);
+      var S = live;
+      if (!S || !o) return open0.apply(this, arguments);
+      S.liveAt = Date.now();
+      return open0.call(this, Object.assign({}, o, { onTokens: function (t) { S.tokAt = Date.now(); return o.onTokens && o.onTokens(t); } }));
     };
   });
+  var DEAF_MS = 3500;   // a voice in the room this long with no word back from an open stream: the stream is not listening
 
   function recorder(stream) {
     var R = { chunks: [], mime: 'audio/webm', at: Date.now(), mr: null };
@@ -166,11 +172,17 @@
       var S = { local: navigator.onLine === false, over: false };
       var rec = turn ? recorder(o.stream) : null;
       var handle = null;
+      live = S;
       var E = ear(o.stream, function (e, now) {
+        if (S.over || !handle || !e.first) return;
+        // a stream that went deaf mid-read (the Wi-Fi dropped, the socket still looks open): the child is reading and
+        // no word comes back. The read goes on, saved on this Chromebook, where it would have been lost as "0 words".
+        if (!S.local) { if (S.liveAt && e.last - Math.max(S.liveAt, S.tokAt || 0) >= DEAF_MS) goLocal(); return; }
         // no live words to end the read: a quiet after some reading does (as the live reader's own quiet rule)
-        if (!S.local || S.over || !handle || !e.first) return;
         if (now - e.last >= (turn ? QUIET_MS : ECHO_QUIET_MS) && now - e.first >= (turn ? n * 300 : 600)) handle.stop('quiet');
       });
+      var dropped = function () { if (!S.over) goLocal(); };
+      window.addEventListener('offline', dropped);
       function goLocal() {
         if (S.local) return;
         S.local = true;
@@ -198,7 +210,7 @@
       o2.onFallback = function (why) { if (why === 'key' || why === 'rest') { if (o.onFallback) o.onFallback(why); } else goLocal(); };
       o2.onResult = function (r) {
         r = r || {};
-        S.over = true; E.stop();
+        S.over = true; E.stop(); window.removeEventListener('offline', dropped);
         var heard = E.ok ? E.voice >= 4 : null;      // 0.4 s at a voice's level in all; null = this device has no ear
         if (!(turn && rec && rec.mr && (S.local || r.live === false) && heard !== false)) {
           if (rec) rec.stop();
@@ -263,7 +275,7 @@
       handle = mount0.call(this, el, o2);
       return {
         stop: function (why) { return handle.stop(why); },
-        destroy: function () { S.over = true; S.gone = true; E.stop(); if (rec) rec.stop(); return handle.destroy(); },
+        destroy: function () { S.over = true; S.gone = true; E.stop(); window.removeEventListener('offline', dropped); if (rec) rec.stop(); return handle.destroy(); },
         // a voice in the room counts as "Jugnu can hear you" while no live words can light
         view: function () { var v = handle.view(); return S.local && v && E.voice >= 3 && !(v.heard > 0) ? Object.assign({}, v, { heard: 1 }) : v; },
       };
