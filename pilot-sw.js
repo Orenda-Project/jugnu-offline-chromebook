@@ -1004,7 +1004,10 @@ function gKeepAll(urls, fresh) {
   var again = fresh || [];
   function get(u) {
     var cross = new URL(u).origin !== self.location.origin;
-    return fetch(new Request(u, { mode: cross ? 'no-cors' : 'same-origin', credentials: 'same-origin', cache: 'no-cache' })).then(function (res) {
+    // a file to be read AGAIN (fresh: the pilot's own files at a new release) is read from the network whatever the
+    // browser's own cache holds: "only if changed" was answered from an older pilot's copy of a rewritten page
+    var how = !cross && again.indexOf(u) >= 0 ? 'reload' : 'no-cache';
+    return fetch(new Request(u, { mode: cross ? 'no-cors' : 'same-origin', credentials: 'same-origin', cache: how })).then(function (res) {
       if (res.status !== 200 && res.type !== 'opaque') return false;
       bytes += Number(res.headers.get('content-length') || 0) || 0;
       return caches.open(KEEP).then(function (c) { return c.put(u, res); }).then(function () { return true; });

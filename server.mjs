@@ -19,6 +19,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { upstreamHeaders, rewrittenHeaders } from './proxy-fresh.mjs';
 import { fileURLToPath } from 'node:url';
 import { speechRoute } from './speech/serve.mjs';
 
@@ -255,7 +256,8 @@ const server = http.createServer((req, res) => {
   }
 
   const ownOrigin = ownOriginOf(req);
-  const headers = { ...req.headers, host: UPSTREAM.host, 'accept-encoding': 'gzip, br, deflate' };
+  // games lane (proxy-fresh.mjs): nothing this server rewrites is asked of Jugnu "only if changed"
+  const headers = upstreamHeaders(req.method, url.pathname, { ...req.headers, host: UPSTREAM.host, 'accept-encoding': 'gzip, br, deflate' });
   delete headers['x-forwarded-host'];
   delete headers['x-forwarded-proto'];
   if (headers.origin) headers.origin = UPSTREAM.origin;
@@ -291,7 +293,8 @@ const server = http.createServer((req, res) => {
         delete out['content-encoding'];
         delete out['transfer-encoding'];
         out['content-length'] = body.length;
-        res.writeHead(upRes.statusCode, out);
+        // games lane (proxy-fresh.mjs): this body is no longer Jugnu's, so Jugnu's validators do not go with it
+        res.writeHead(upRes.statusCode, rewrittenHeaders(out));
         res.end(body);
         log({ m: req.method, p: req.url, s: upRes.statusCode, type, bytes: body.length, ua, ms: Date.now() - started });
       });
@@ -310,7 +313,7 @@ let RELEASE = null;
 function release() {
   if (RELEASE) return RELEASE;
   const has = (f) => fs.existsSync(path.join(HERE, f));
-  const own = [...new Set(Object.values(LOCAL).map((v) => v[0]))].concat(readyList().map((f) => 'ready/' + f), ['server.mjs', 'speech/match.js', 'speech/jugnu-speech.js', 'speech/serve.mjs', 'home-routes.mjs', 'media-routes.mjs']).filter(has).sort();
+  const own = [...new Set(Object.values(LOCAL).map((v) => v[0]))].concat(readyList().map((f) => 'ready/' + f), ['server.mjs', 'proxy-fresh.mjs', 'speech/match.js', 'speech/jugnu-speech.js', 'speech/serve.mjs', 'home-routes.mjs', 'media-routes.mjs']).filter(has).sort();
   const h = createHash('sha256');
   for (const f of own) { h.update(f); h.update(fs.readFileSync(path.join(HERE, f))); }
   // the worker's own files are renewed by the browser, not kept by the worker; "/" only redirects

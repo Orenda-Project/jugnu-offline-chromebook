@@ -641,3 +641,15 @@ test('a kept reading no server took for 45 days is given up: it says so, and the
   assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['too_old']);
   assert.equal(await sw.message({ type: 'games-audio-kept' }), 0);
 });
+
+test("a new release reads the pilot's own files past the browser's own cache (it once answered with an older pilot's page)", async () => {
+  const how = {};
+  const sw = load({ source, fetch: (req) => {
+    const p = new URL(req.url).pathname;
+    if (p === '/__cb/release') return json({ stamp: 'rel-a', files: ['/__cb/boot.js', '/sa/play.html'] });
+    how[p] = req.cache;
+    return new Response('x', { status: 200 });
+  } });
+  await sw.message({ type: 'release' });
+  assert.deepEqual(how, { '/__cb/boot.js': 'reload', '/sa/play.html': 'reload' });
+});
