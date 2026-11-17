@@ -1,0 +1,38 @@
+/* Jugnu's battery screens (/sa/play.html) on a school Chromebook page: 1366 wide, 633 high.
+ *
+ * Jugnu's own sheet (sa.css, "Round 8 layout") gives a screen 600 px or wider its tablet sizes: answer tiles 180 px
+ * high, keys 88 px, Jugnu 112 px. A tablet is tall; a Chromebook page is not, so the second row of answers and the
+ * keypad's 0 fall below the page and the child has to scroll on every question of a one-minute task. These rules are
+ * for a wide, SHORT page only: the same screens, each fitted to the height there is. The pilot adds this sheet to
+ * /sa/play.html (server.mjs); the place for it is sa.css itself (see README, What is left). */
+@media (min-width:600px) and (max-height:700px){
+  .sae.is-r8-layout{--sae-tap:60px}
+  .sae.is-r8-layout .sae-screen{padding:8px 16px 10px;gap:6px}
+  .sae.is-r8-layout .sae-body{gap:8px}
+  .sae.is-r8-layout .sae-top{min-height:40px}
+  .sae.is-r8-layout .sae-h1{font-size:30px}
+  .sae.is-r8-layout .sae-sub,.sae.is-r8-layout .sae-say{font-size:22px}
+  .sae.is-r8-layout .sae-task-tag{font-size:20px;margin:0}
+  .sae.is-r8-layout .sae-chip{font-size:19px}
+  .sae.is-r8-layout .sae-jugnu-s,.sae.is-r8-layout .sae-check .sae-jugnu-s{width:72px;height:72px}
+  .sae.is-r8-layout .sae-replay,.sae.is-r8-layout .sae-check .sae-replay{width:60px;height:60px;font-size:26px}
+  .sae.is-r8-layout .sae-btn{font-size:26px}
+  /* answer tiles: two rows must fit under the title, Jugnu and the clock */
+  .sae.is-r8-layout .sae-opts{gap:12px}
+  .sae.is-r8-layout .sae-opt{min-height:clamp(96px,19vh,150px);font-size:52px}
+  .sae.is-r8-layout .sae-opt[lang=ur]{font-size:46px}
+  .sae.is-r8-layout .sae-opt.is-short[lang=ur]{font-size:46px}
+  /* the keypad and the letter strip: every key on the page, the 0 and the tick included */
+  .sae.is-r8-layout .sae-key,.sae.is-r8-layout .sae-letters .sae-key{min-height:clamp(52px,10.5vh,80px);font-size:30px}
+  .sae.is-r8-layout .sae-keypad,.sae.is-r8-layout .sae-letters{gap:8px}
+  .sae.is-r8-layout .sae-star{min-height:88px}
+  .sae.is-r8-layout .sae-more{min-height:56px;font-size:21px}
+  .sae.is-r8-layout .sae-onecell{height:clamp(200px,40vh,640px)}
+  /* five answers (letters, sounds): three and two, not two, two and one below the page */
+  .sae.is-r8-layout .sae-opts.is-five{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .sae.is-r8-layout .sae-opts.is-five .sae-opt:last-child{grid-column:auto}
+  /* the last screen: its one button ("Go back") on the page; the space under it is the coach page's bar, not the game's */
+  .sae.is-r8-layout .sae-end .sae-jugnu{width:88px;height:88px}
+  .sae.is-r8-layout[data-mode=game] .sae-end.is-r8-endfit{padding-bottom:12px}
+  .sae.is-r8-layout .sae-kpwarm .sae-kpw-typed{min-height:48px;font-size:34px}
+}

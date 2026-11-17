@@ -213,4 +213,124 @@
   window.addEventListener('offline', refresh);
   setInterval(refresh, 5000);
   document.addEventListener('DOMContentLoaded', refresh);
+
+  /* ---- games lane (bd-fc5mgd.13.2): Jugnu's big flight ---- */
+  (function gamesLane() {
+    // One offline worker: Jugnu's own battery worker (scope /sa/) would take /sa/ pages away from the pilot worker
+    // (no way back to the map and nothing sent later for a part started with no network). Remove it where it is.
+    try {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        rs.forEach(function (r) { if (/\/sa\/$/.test(r.scope)) r.unregister(); });
+      }, function () {});
+    } catch (e) { /* an old browser: the stand-in at /sa/sw.js removes it */ }
+
+    // The sea map has no way home of its own (on a phone the child goes back to WhatsApp).
+    function mapHome() {
+      var hub = null;
+      try { hub = localStorage.getItem('cb-hub'); } catch (e) {}
+      if (!hub || !/^\/sa-game\//.test(location.pathname) || document.querySelector('[data-cb-home]') || !document.body) return;
+      var a = document.createElement('a');
+      a.setAttribute('data-cb-home', '');
+      a.href = '/cb/home?from=home'; // the one address that always opens this Chromebook's home (lane/home)
+      a.textContent = '⌂ Home';
+      a.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483647;padding:10px 16px;border-radius:999px;' +
+        'background:#1f2937;color:#fff;font:600 15px/1 system-ui,sans-serif;text-decoration:none;box-shadow:0 2px 6px rgba(0,0,0,.25)';
+      document.body.appendChild(a);
+    }
+    document.addEventListener('DOMContentLoaded', mapHome);
+    setTimeout(mapHome, 1500);
+
+    // What earlier parts left on this Chromebook goes up by itself when there is a network: a hidden frame runs the
+    // battery engine's own upload queue for every run with something unsent (sa-drain.html). Not on the child's
+    // own page (/sa/play.html sends for itself), and only when this device has ever played a part.
+    var draining = false;
+    function played() { try { for (var i = 0; i < localStorage.length; i += 1) if (/^sg\.st\./.test(localStorage.key(i))) return true; } catch (e) {} return false; }
+    function drain() {
+      if (draining || !navigator.onLine || !document.body || /^\/sa\/play\.html/.test(location.pathname) || /^\/__cb\//.test(location.pathname) || !played()) return;
+      draining = true;
+      var f = document.createElement('iframe');
+      f.setAttribute('aria-hidden', 'true');
+      f.style.cssText = 'position:absolute;width:0;height:0;border:0;left:-9999px';
+      f.src = '/__cb/sa-drain';
+      var done = function () { if (f.parentNode) f.parentNode.removeChild(f); draining = false; };
+      window.addEventListener('message', function onMsg(e) {
+        if (e.origin !== location.origin || !e.data || e.data.type !== 'cb:drained') return;
+        window.removeEventListener('message', onMsg);
+        window.__cbDrained = e.data;
+        try { fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ games_sent: e.data.sessions || [], why: e.data.why || null }) }).catch(function () {}); } catch (x) { /* a report only */ }
+        done();
+      });
+      setTimeout(done, 120000);
+      document.body.appendChild(f);
+    }
+    window.__cbDrain = drain;
+    window.addEventListener('online', function () { setTimeout(drain, 1500); });
+    setTimeout(drain, 3500);
+
+    // A reading done with no network gets its feedback from the scorer on this Chromebook: lit words and stars,
+    // never words a minute (games-read.js; the speech lane's scorer). On the Challenge page it watches for a
+    // recording the offline worker took; on the sea map, back from a part, it scores that part's stories. The
+    // part's session is read here, before the map's own script takes done= and s= off the address.
+    if (/^\/(c|sa-game)\//.test(location.pathname)) {
+      var back = new URLSearchParams(location.search);
+      var doneSid = back.get('done') ? back.get('s') : null;
+      var gr = document.createElement('script');
+      gr.src = '/__cb/games-read.js';
+      gr.onload = function () {
+        if (!doneSid || navigator.onLine || !window.__cbFlightRead) return;
+        var tries = 0;
+        (function wait() {
+          if (window.SAE && window.SAE.store && document.getElementById('sg-card')) { window.__cbFlightRead(doneSid); return; }
+          if (++tries < 120) setTimeout(wait, 250);
+        }());
+      };
+      (document.head || document.documentElement).appendChild(gr);
+    }
+
+    // The battery's screens on a short page. cb-fit.css gives the answer tiles and keys sizes that fit 633 px; what
+    // still does not fit (Urdu lines are taller, a long word problem) is scaled down to the page, so no answer and
+    // no key is ever below it. A story is left alone: it scrolls by design, one part at a time.
+    if (/^\/sa\/play\.html/.test(location.pathname)) {
+      var fitT = null;
+      var fitScreen = function () {
+        var scr = document.querySelector('#sae-root .sae-screen');
+        if (!scr) return;
+        if (scr.querySelector('.sae-passage')) { if (scr.style.zoom) scr.style.zoom = ''; return; }
+        scr.style.zoom = '';
+        var need = scr.scrollHeight;
+        var have = window.innerHeight;
+        if (need > have + 2) scr.style.zoom = String(Math.max(0.7, (have - 2) / need));
+      };
+      try {
+        new MutationObserver(function () { clearTimeout(fitT); fitT = setTimeout(fitScreen, 50); }).observe(document.documentElement, { childList: true, subtree: true });
+        window.addEventListener('resize', fitScreen);
+      } catch (e) { /* the screens as they are */ }
+    }
+
+    // A Chromebook has a keyboard; Jugnu's number pads and letter strip are for a touch screen and take no key at
+    // all (no key handler in the battery's screens or the Challenge page). A digit, a letter, Backspace or Enter
+    // presses the on-screen key of that name, so a child can type "12" and press Enter. Urdu digits count as digits.
+    // On a battery screen with no pad showing, Enter presses the screen's one main button (Next, Go, Start), which
+    // Jugnu keeps disabled until it has finished speaking.
+    document.addEventListener('keydown', function (e) {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || e.defaultPrevented) return;
+      var t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      var k = e.key;
+      var ur = '۰۱۲۳۴۵۶۷۸۹'.indexOf(k);
+      var want = /^[0-9]$/.test(k) ? k : ur >= 0 ? String(ur) : k === 'Backspace' ? 'del' : k === 'Enter' ? 'ok' : /^[a-zA-Z]$/.test(k) ? k.toLowerCase() : null;
+      if (!want) return;
+      var shown = function (b) { return b && b.offsetParent !== null && !b.disabled && !b.hasAttribute('hidden'); };
+      var keys = document.querySelectorAll('.sae-keypad .sae-key, .sae-letters .sae-key, .wqc-keys .wqc-k');
+      for (var i = 0; i < keys.length; i += 1) {
+        var name = keys[i].getAttribute('data-key') || keys[i].getAttribute('data-k');
+        if (name === want && shown(keys[i])) { e.preventDefault(); keys[i].click(); return; }
+      }
+      if (want === 'ok' && !keys.length && /^\/sa\/play\.html/.test(location.pathname)) {
+        var main = [].slice.call(document.querySelectorAll('.sae-primary')).filter(shown);
+        // a focused button takes its own Enter; this is for a page where nothing is focused
+        if (main.length === 1 && (!t || t.tagName !== 'BUTTON')) { e.preventDefault(); main[0].click(); }
+      }
+    });
+  }());
 }());

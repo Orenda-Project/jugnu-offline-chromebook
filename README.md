@@ -59,6 +59,103 @@ The school's class list is loaded once by Get ready and kept on the device, so a
 **first names and roll numbers only** (no family names, phones or dates of birth), and the server gives it only to a
 Chromebook that has the **device key**, which the Chromebook receives once from its setup link (`/cb?key=…`).
 
+## The learning games (17 Nov 2026)
+
+What a child reaches behind the home's **Games** door, in every grade and in English and Urdu
+(`rig/games/inventory.mjs`, ten test children, one per grade and language):
+
+| Grade | Games |
+|---|---|
+| 1 | **Numbers with Jugnu** (how many dots) · **Jugnu's big flight** · three video quizzes ("Try these next") |
+| 2–5 | **Number warm-up** (the missing number) · **Which is bigger?** · **Read along** · **Read aloud** · **Listen** · **Jugnu's big flight** · three video quizzes |
+
+**Jugnu's big flight** is the reading and number battery (EGRA/EGMA) as a game, and it holds the three games people ask
+for by name: **Urdu Island** is the Urdu reading game (9 stones: listening, vocabulary pictures, first sounds, letters,
+made-up words, words, a story read aloud and its questions), **English Island** the English reading game (11 stones,
+spelling included), **Numbers Island** the maths game (14 stones; 15 in Grades 4–5), then the **Big flight** through
+20 stones. There are three batteries (Grade 1, Grades 2–3, Grades 4–5), each in English and Urdu: six files that name
+1,030 clips and pictures. The door's grade picker ("All grades") also opens the other grades' number games.
+
+What the pilot does for them:
+
+- **Get ready keeps all of it** (`ready/games.js`): all six batteries, every clip and picture they name (the list is
+  the battery engine's own, never a copy that can drift), the engine, the sea map in both languages, and every
+  Challenge game behind the door with the clips it names. It ends by asking the worker which files are *not* on the
+  device and prints the count ("6 of 6 batteries, 1030 clips and pictures, 0 not saved"). Before, it kept the Grade 1
+  battery only, no battery picture, and nothing of the Grades 2–5 number games.
+- **One offline worker.** Jugnu's battery has a worker of its own (scope `/sa/`); under the pilot it took those pages
+  away from the pilot's worker, so a part started with no network had no way back to the map and nothing it could ever
+  send. The proxy now serves a stand-in at `/sa/sw.js` that removes that worker, and `pilot-sw.js` (its GAMES LANE
+  block) answers the engine's "keep these / are these kept" itself, so Jugnu speaks with its recorded clips.
+- **A part started offline is sent later.** It gets a run on the device; when the engine next sends answers or a
+  recording and there is a network, the real run is opened with the request kept from the start. A hidden frame
+  (`sa-drain.html`, started by `boot.js` on any page) runs the engine's own upload queue as soon as the network is
+  back: nobody presses anything.
+- **The Challenge's number games and Read aloud with no network**: the taps, or the recording, wait on the device and
+  the page shows its end card; back online they go to the run they were played in, or, when its two-hour token has
+  lapsed, to a fresh serve of the *same* questions or story. Other questions: nothing is sent, and the outbox says so.
+- **A reading with no network gets its feedback on the Chromebook** (`games-read.js`, the speech scorer in
+  `speech/`): the words Jugnu heard are lit and one to three stars are shown, never words a minute. On the Challenge
+  page it appears under the page's own card; in the big flight, on the sea map's card after a part, for the stories
+  read aloud in that part (the battery's own screens show a child no score, and are not changed). The recording is
+  kept and goes to Jugnu's scorer when the network is back; letter sounds and Urdu word lists are never scored here.
+- **A home link that renews itself** (the HOME block) does not lose the games: the sea map and the Challenge pages
+  are filed under the home's children, a part's start and the outbox send the live link.
+- **A recording's upload goes through the pilot's server** (`/__cb/r2put`): Jugnu's storage bucket accepts a browser's
+  upload only from Jugnu's own site, so through the pilot every reading's upload was refused (also on the deployed
+  pilot).
+- **The Chromebook's keyboard types** into Jugnu's number pads and letter strip (digits, letters, Backspace, Enter);
+  Jugnu's screens take no key at all.
+- **The battery's screens fit a 1366×633 page** (`cb-fit.css`, added to `/sa/play.html`): Jugnu sizes any screen 600 px
+  or wider as a tall tablet, so the second row of answers and the keypad's 0 sat below the page.
+
+What is proven on the laptop rig (17 Nov 2026; a Chromebook-shaped Chrome with a 1366×633 page, twenty sandbox test
+children, each in its own profile; not yet on a real Chromebook):
+
+| Game | Grade 1 | Grades 2–3 | Grades 4–5 | Online | Network off |
+|---|---|---|---|---|---|
+| Big flight: Numbers Island (maths) | en, ur | en, ur | en, ur | every stone, results on the server | every stone; results on the server by itself after reconnect |
+| Big flight: English Island (English reading) | en, ur | en, ur | en, ur | the same | the same, plus lit words and stars for the story on the map's card |
+| Big flight: Urdu Island (Urdu reading) | en, ur | en, ur | en, ur | the same | the same (the rig has no Urdu voice for the story's own words) |
+| Big flight: the Big flight (20 stones) | en, ur | en, ur | en, ur | the same | the same |
+| Numbers with Jugnu (dots) | en, ur | – | – | scored | played; scored on its own run after reconnect |
+| Number warm-up, Which is bigger? | – | en, ur | en, ur | scored | played; scored on their own runs after reconnect |
+| Read along, Read aloud | – | en, ur | en, ur | recorded, uploaded, scored | recorded on the device; uploaded and scored after reconnect |
+| Listen | – | en, ur | en, ur | scored | **the story plays, the questions do not open** (see below) |
+
+"Network off" is the server's OFFLINE switch **and** every browser offline: in the 46 minutes of the first offline
+run the server dropped 511 requests and answered none; while offline the database held nothing of the play; after
+the network came back the devices opened 40 runs and sent 150 batches, 34 game results and 16 recordings, with
+nobody pressing anything.
+
+The same offline run was repeated on the code of all four lanes together (speech, home, stories, games): 53 minutes
+with the switch on, 499 requests dropped and none answered, the big flight 40 of 40 parts, the dots 2 of 2, warm-up,
+bigger, read along and read aloud 32 of 32, Listen 0 of 8. With no network a reading on the Challenge page got its
+feedback from the device: English 36 of 36 and 63 of 63 words lit (three stars), Urdu 34 of 38 and 38 of 39 (the rig
+"read" with Jugnu's own recording of each story); never words a minute. After reconnect each recording was uploaded
+and scored by Jugnu. Evidence: `logs/matrix-offline-1/`, `-2/`, `-3-reads/` and `logs/evidence-*.txt` on the lane's
+machine (logs are not committed).
+
+What cannot be done by the pilot, and why:
+
+- **Listen with no network.** The story is on the device and plays; its questions and their answer choices are asked
+  of the server only after the story has been heard (`POST /api/wq/ch/qs` with the run's token), and each answer is
+  checked there (`ch/qa`). Nothing on the device holds them. Jugnu has to hand the questions over with the game.
+- **The big flight's readings are not scored by Jugnu at all** (online too): a game recording is kept only with a
+  consent value the game never sends, and no scorer reads a game run's recordings. Offline the pilot scores the
+  stories on the device (feedback, and `device_read` on the task's result); whether Jugnu keeps and scores children's
+  voices in the game is a consent decision for the people who run it.
+- A number game or a reading played offline is sent to the run it was played in for two hours (the life of its
+  token), then to a fresh serve of the same questions or story: always possible for the dots and the warm-up, within
+  a day of the last online visit for "Which is bigger?" and a reading. After that Jugnu serves other questions and the
+  play is not sent (the outbox says `questions_changed`). Jugnu should accept a late result for a served run.
+- The Big flight can be flown once a month: a second one flown offline is refused when it is sent (409) and stays on
+  the device.
+
+Test it: `node rig/games/matrix.mjs online <children>` and `… offline <children>` (each child in its own Chrome
+profile; offline = Get ready, then the server's OFFLINE switch and every browser offline, then the network back and
+only watching). `npm test` runs the worker's rules in node (`test/pilot-sw.test.mjs`).
+
 ## How it works
 
 ```
@@ -237,7 +334,36 @@ The remaining work is filed as issues in this repo. In short:
    it (0.6–1.3 GB a class, 4.6 GB for Classes 1–5; Nursery, KG and Class 6 are listed without a size on sandbox).
 10. Fleet measurement: per device, ready for offline, last sync, offline plays, sync delay.
 
+The learning games need these in Jugnu itself (the pilot covers each today, on its own pages only):
+
+- The battery's screens (`dashboard/sa/sa.css`, "Round 8 layout") sized for a wide, short page: the rules in
+  `cb-fit.css` and the scale-to-fit in `boot.js` are the ones to carry over.
+- Keys: a digit, a letter, Backspace and Enter for the number pads and the letter strip (battery and Challenge).
+- A part of the big flight started with no network: keep the start's request and open the run when the network is
+  back (`dashboard/sa/sink-game.js` already has `forGame`; the map page does not use it), and send from any page.
+- The way back to the sea map with no network (`sa-engine.js` waits for a HEAD of the map to answer).
+- The battery worker asked to keep all six batteries when the game is first opened, not one part at a time.
+- Listen's questions handed over with the game; a late result accepted for a served run (number games, readings).
+- A decision on keeping and scoring children's readings in the big flight (today: recorded, dropped, never scored).
+- Uploads of recordings from any origin Jugnu is served from (the bucket's CORS names one).
+- The last battery screen's "Go back" 48 px below a 633 px page; the Challenge's microphone notice and read-along
+  controls just under it.
+
 ## What we learned
+
+- **Two home links signed in the same second are the same link** (the link has no nonce), and a link locks to the
+  first device that opens it: five test links made together were one link, and a rig that opened it after another
+  was told "This link was sent to another player". (The HOME block's links carry a nonce.)
+- **A worker of its own scope takes its pages away from every other worker.** Jugnu's battery worker (`/sa/`) left
+  the pilot's worker blind on the child's battery page: one offline worker per site, or none of them can finish the job.
+- **A time limit on the network must never answer "offline" when nothing is saved.** The worker's 4 seconds answered
+  503 to a first request the server did answer in 4.03 s.
+- **Jugnu's screens are sized by width.** A Chromebook page is wide and short; "600 px or wider" meant "a tall
+  tablet", and half the answers were below the page.
+- **Storage outside Jugnu's own site refuses the pilot's uploads** (CORS allows one origin): anything the page sends
+  straight to the bucket has to go through the pilot's server.
+- **A rig that jumps from one game to the next by address can skip a game**: two addresses that differ only after
+  "#" do not load a page. Come to each game the way a child does, or leave the page first.
 
 - **Guest mode erases everything when the session ends** (exit, restart, shutdown, flat battery). Nothing saved in
   Guest survives a restart. A shared school account per school, signed in once on each Chromebook, keeps everything

@@ -78,6 +78,13 @@ const LOCAL = {
   '/hello': ['hello.html', 'text/html; charset=utf-8'], // the device check: model, ChromeOS/Chrome version, memory
   '/cb': ['cb.html', 'text/html; charset=utf-8'], // the Chromebook test page: Get ready for offline, then play
   '/who': ['who.html', 'text/html; charset=utf-8'], // who's playing: class > section > name, search, add me
+  // games lane: one offline worker. Jugnu's battery worker (scope /sa/) is replaced by a stand-in that removes
+  // itself, so /sa/ pages are the pilot worker's (see pilot-sw.js, GAMES LANE); and the page that sends what the
+  // big flight left on the device.
+  '/sa/sw.js': ['sa-sw-off.js', 'application/javascript; charset=utf-8'],
+  '/__cb/sa-drain': ['sa-drain.html', 'text/html; charset=utf-8'],
+  '/__cb/cb-fit.css': ['cb-fit.css', 'text/css; charset=utf-8'], // the battery's screens fitted to a 1366x633 page
+  '/__cb/games-read.js': ['games-read.js', 'application/javascript; charset=utf-8'], // a reading with no network: feedback from the scorer on the device
 };
 /** The Get-ready step files in ready/, in name order. */
 function readyList() {
@@ -200,6 +207,27 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // games lane: a child's recording on its way to Jugnu's storage bucket. The bucket's CORS rule takes a browser's
+  // PUT only from Jugnu's own site, so a page served by this pilot cannot upload; the offline worker sends the PUT
+  // here and it is passed on as it came (the signed address is Jugnu's own; only that bucket's host is accepted).
+  if (url.pathname === '/__cb/r2put' && req.method === 'PUT') {
+    let target = null;
+    try { target = new URL(url.searchParams.get('u') || ''); } catch (e) { target = null; }
+    if (!target || target.protocol !== 'https:' || !/\.r2\.cloudflarestorage\.com$/.test(target.hostname)) {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'not_a_storage_address' }));
+      return;
+    }
+    const headers = { 'content-type': req.headers['content-type'] || 'application/octet-stream' };
+    if (req.headers['content-length']) headers['content-length'] = req.headers['content-length'];
+    const out = https.request({ hostname: target.hostname, port: 443, path: target.pathname + target.search, method: 'PUT', headers }, (r2) => {
+      r2.resume();
+      r2.on('end', () => { res.writeHead(r2.statusCode).end(); log({ m: 'PUT', p: '/__cb/r2put', s: r2.statusCode, bytes: Number(headers['content-length'] || 0), local: true, ua }); });
+    });
+    out.on('error', (e) => { if (!res.headersSent) res.writeHead(502).end(); log({ m: 'PUT', p: '/__cb/r2put', s: 502, err: e.message, ua }); });
+    req.pipe(out);
+    return;
+  }
+
   const local = LOCAL[url.pathname];
   if (local && req.method === 'GET') {
     res.writeHead(200, { 'content-type': local[1], 'cache-control': 'no-cache', 'service-worker-allowed': '/' });
@@ -246,6 +274,8 @@ const server = http.createServer((req, res) => {
         text = rewriteText(text, ownOrigin);
         if (/^text\/html/i.test(type)) {
           text = /<\/head>/i.test(text) ? text.replace(/<\/head>/i, `${BOOT_TAG}</head>`) : BOOT_TAG + text;
+          // games lane: the battery's own sheet sizes a wide screen as a tall tablet; a Chromebook page is short
+          if (url.pathname === '/sa/play.html') text = text.replace(/<\/head>/i, '<link rel="stylesheet" href="/__cb/cb-fit.css"></head>');
           // the boot script is same-origin; a CSP that names 'self' already allows it
         }
         const body = Buffer.from(text, 'utf8');
