@@ -20,6 +20,8 @@ import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { homeRoutes } from './home-routes.mjs'; // this Chromebook's child home, signed fresh (lane/home)
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -59,6 +61,9 @@ function readBody(req, cb) {
   req.on('data', (c) => { body += c; if (body.length > 64 * 1024) req.destroy(); });
   req.on('end', () => cb(safeJson(body)));
 }
+
+// HOME (lane/home): POST /__cb/home signs this Chromebook a fresh child home; /cb/home is the address that opens it.
+const home = homeRoutes({ here: HERE, deviceKey: DEVICE_KEY, loadConfig, roster: ROSTER, readBody, log: (e) => log(e) });
 
 const LOCAL = {
   '/__cb/sw.js': ['pilot-sw.js', 'application/javascript; charset=utf-8'],
@@ -120,6 +125,7 @@ const server = http.createServer((req, res) => {
     log({ m: req.method, p: req.url, s: 302, ua });
     return;
   }
+  if (home(req, res, url, currentIp, ua)) return; // HOME (lane/home)
   // Get-ready steps, one file per area (ready/<name>.js); cb.html loads each and runs them after its own steps.
   const rm = /^\/__cb\/ready\/([a-z0-9-]+\.js)$/.exec(url.pathname);
   if (rm && readyList().includes(rm[1])) {
@@ -130,7 +136,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/__cb/manifest') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
-    res.end(JSON.stringify({ ...loadConfig(), roster: !!ROSTER, static: staticList(), ready: readyList() }));
+    res.end(JSON.stringify({ ...loadConfig(), roster: !!ROSTER, static: staticList(), ready: readyList(), signing: home.signing() }));
     log({ m: req.method, p: req.url, s: 200, local: true, ua });
     return;
   }
