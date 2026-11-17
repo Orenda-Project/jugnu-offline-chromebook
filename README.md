@@ -203,9 +203,15 @@ The remaining work is filed as issues in this repo. In short:
    the pilot's own log.
 4. Lesson videos the device can keep **without this pilot's server in between**: a CORS rule on the bucket or a
    public file address (the pilot now saves them, but through its own small service: `docs/HOME-AND-VIDEOS.md`).
-5. Nothing live during a child's turn: every clip pre-recorded; read-aloud recorded offline and scored later.
+5. Nothing live during a child's turn: every clip pre-recorded. A storybook's "Your turn" now works with no network
+   (scored on the Chromebook, the recording scored again online); for that to be Jugnu's own it needs: a late
+   reading accepted without spending the scoring day's limits (40 pages a child, the service's daily reads); the
+   time a page was read, not the time it arrived; the microphone notice's words for a recording that waits on the
+   device ("story pages are never kept" is about the server); and each book's answers shipped with the book for a
+   device that prepares for offline (today the first Chromebook asks the server about each question once, and the
+   pilot keeps what it learned for the others).
 6. A Chromebook screen: layout for 1366×633, "saved on this device" (not "this phone"), no WhatsApp step.
-7. Offline analytics for storybooks, games and usage events; the time a quiz was played.
+7. Offline analytics for games and usage events (storybooks: done); the time a quiz or a page was played.
 8. Proof that saved content survives a restart in a signed-in account.
 9. The whole library on the device: all storybooks and voices (~0.5 GB) plus the videos of the classes that use
    it (0.6–1.3 GB a class, 4.6 GB for Classes 1–5; Nursery, KG and Class 6 are listed without a size on sandbox).
@@ -222,6 +228,12 @@ The remaining work is filed as issues in this repo. In short:
 - **A browser's offline emulation does not reach a service worker's requests**: test offline at the server.
 - **On a first visit nothing is kept** until the worker is in charge; the page hands it everything it loaded.
 - These Chromebooks give a page 1366×633: anything below that line needs scrolling.
+- **A worker that keeps every POST answer will replay a one-read speech key.** Offline, "Your turn" got last week's
+  key, opened a stream that could not open, listened for 10 s and said "0 words". Keys are never kept now.
+- **A look-up that searches every kept file is slow in proportion to the files kept**: 470 ms a miss at 4,800 files on
+  a laptop (an exact look-up: 0.1 ms). Get ready slowed with every file it saved. Look a file up exactly first.
+- **A dropped Wi-Fi leaves a speech stream that looks open and hears nothing**: the read ended as "0 words". A voice in
+  the room with no word back for 3.5 s now means the read is taken over on the Chromebook.
 - **A child home link runs out after 7 days, and a worker that keeps every `200` page will keep the wrong one.**
   Jugnu's fast first page answers `200` before it knows the link is expired, then tells the browser to ask again.
   That page was saved over the good copy, so the home broke offline too (4 Nov). The worker now never sends an
