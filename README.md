@@ -66,6 +66,35 @@ Chromebook (Chrome)                          this repo                       Jug
 - **`rig/`**: Playwright scripts that run a Chromebook-shaped Chrome (1366×768, ChromeOS user agent) on a laptop.
 - **`device/`**: scripts that drive a real Chromebook's Chrome over its remote-debugging port (test unit only).
 
+## Storybooks (Stories door)
+
+A storybook has four parts, and each has its own way of working with no network:
+
+| Part | Online | With no network |
+|---|---|---|
+| Jugnu reads the page, the words light | the page's stored voice clip and its word times, from Jugnu | the same clip and times from this Chromebook (Get ready saves every book: all grades, English and Urdu) |
+| **Your turn**: the child reads aloud and is graded | live: the microphone is streamed to Jugnu's speech service, each word lights as it is heard | **recorded on the Chromebook, scored later**: the page says "Saved! Jugnu will listen when the internet is back", and the book goes on |
+| Questions, and the look-back page after a wrong pick | the server checks each tap | checked on the Chromebook from the answers Get ready left on it |
+| What the child did (pages heard, pages read, questions, finished) | sent as it happens | kept on the Chromebook, sent by itself when the network is back |
+
+- **`sw-stories.js`** (the worker's storybook part): keeps each shelf and book under a name that does not hold the
+  child's home link, so a book saved under one link opens under the next (links last 7 days); keeps every story step
+  that could not be sent (IndexedDB `cb-stories`); answers a question's tap from the saved answers; never keeps or
+  replays the one-read speech key.
+- **`stories.js`** (on every page): when the speech service cannot be reached (no network, no key in 4 s, or the
+  live words stop mid-read) it records the child's reading beside Jugnu's own reading screen (opus, about 4 KB a
+  second), and after reconnecting plays each recording to the speech service exactly as a live read (a one-read key,
+  the same stream, Jugnu's own word matcher), then sends the page's real numbers. A recording leaves the Chromebook
+  only for the speech service and is deleted once heard. A read with no voice in it is not saved.
+- **`ready/stories.js`** (Get ready): every shelf a child can reach (my grade, All grades, grades 1-5, both
+  languages), every book on them, every picture and voice, the reader's own files, each book's answers; it asks for
+  the microphone while an adult is at the Chromebook; it checks that each file was kept and says how many were not.
+- **`rig/stories.mjs`**: a child's whole way through storybooks on the laptop rig, online or with the network truly
+  off, with real speech in the microphone, and what reached the server after reconnecting.
+
+A saved reading is scored with the same daily limits as a live one (40 pages a child a day, and the whole service's
+daily reads), counted on the day it is scored: a child who read more than that offline is scored over the next days.
+
 ## Run it
 
 Settings (environment variables; on a laptop, files work too):
@@ -90,6 +119,8 @@ cp cb-config.example.json cb-config.json                   # a child home link a
 **On a laptop:** `node rig/cb-check.mjs <child home token>` runs Get ready, turns the network off and opens every
 link; `node rig/run-quiz.mjs <code> "<name>" [--keep] [--offline] [--new-child]` plays a quiz;
 `node rig/tour.mjs <token> online|offline` tours storybook, video, number game and reading game;
+`node rig/stories.mjs <token> online|offline [--lang en|ur] [--grade all] [--books all] [--reconnect]` reads storybooks as a
+child does (Jugnu reads, Your turn with real speech, questions, done) and says what reached the server;
 `node rig/who-check.mjs <device key> "<new name>"` runs Who's playing? online (pick a child) and offline (add me).
 For a true offline run, `touch OFFLINE` (the server drops every connection) — a browser's own offline switch does
 not reach the worker's requests. `rm OFFLINE` to come back.
@@ -109,9 +140,10 @@ Child home links are signed by Jugnu: `tools/sign-hub.mjs` signs one for a test 
 
 Every answer is saved on the Chromebook first, then sent in batches whenever there is a connection; nothing waits
 for a person to press anything. A quiz played offline arrives as a normal session with its answers and score, so
-the existing reports read it like any other. Today this covers **quizzes**. Storybook reading events, game results
-and the page's usage events are not yet kept while offline, and a synced session is stamped with the time it
-arrived, not the time it was played. Both are open issues.
+the existing reports read it like any other. This covers **quizzes** and **storybooks** (pages heard, pages read
+aloud with their word counts, questions, finished books). Game results and the page's usage events are not yet kept
+while offline, and what is sent later is stamped with the time it arrived, not the time it was played. Both are
+open issues.
 
 ## What is left
 
