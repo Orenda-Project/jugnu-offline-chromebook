@@ -317,15 +317,15 @@
     // The Challenge's screens (/c/…) on a short page. They are sized for a phone held upright: on a 633 px page the
     // number pad's 0 and delete, the microphone notice's OK and a result card's Home sat 120 to 250 px below the page
     // (the taller Urdu lines most of all), so a child had to scroll to answer. A screen taller than the page is
-    // scaled down to it (never below 0.7). A screen that shows the story's words is left alone: reading size
-    // matters more there, and a story scrolls by design.
+    // scaled down to it (never below 0.7). The screens a child reads ALOUD from (read-ready, read-rec, read-live)
+    // are left alone: reading size matters more there, and a long passage scrolls by design.
     if (/^\/c\//.test(location.pathname)) {
       var fitCT = null;
       var fitChallenge = function () {
         var scr = document.querySelector('#wq section.wq-screen');
         if (!scr) return;
         scr.style.zoom = '';
-        if (window.innerWidth < 600 || scr.querySelector('.wqc-w')) return;
+        if (window.innerWidth < 600 || /^read-(ready|rec|live)$/.test(scr.getAttribute('data-screen') || '')) return;
         var page = document.documentElement.scrollHeight;
         var have = window.innerHeight;
         if (page <= have + 2) return;
