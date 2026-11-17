@@ -394,3 +394,62 @@ test("a new release of the pilot replaces the saved copies of its own files; the
   assert.equal(c.refreshed, 0);
   assert.equal(reads, 2);
 });
+
+// ---- games lane: Listen (a story, then questions) with no network ----
+const LISTEN = '/api/wq/ch/tok.sig/listen?lang=en&kid=a1b2c3d4e5f60718&room=story&pid=en.listen.1.story01';
+const RIGHT = { 'q.1': 'ice cream', 'q.2': 'in the park', 'q.3': 'it melted' };
+const WRONG = { 'q.1': ['an apple', 'a cake'], 'q.2': ['at home', 'at school'], 'q.3': ['it flew', 'it sang'] };
+/** A small Jugnu: every serve is a new run; a run's options are in an order of its own; qa says ok and the right answer. */
+function listenServer({ expired = () => false } = {}) {
+  const st = { serves: 0, calls: [], answered: [] };
+  const order = (ct, id) => { const o = [RIGHT[id], ...WRONG[id]]; const k = Number(ct.split('-')[1]) % 3; return o.slice(k).concat(o.slice(0, k)); };
+  st.fetch = (req, body) => {
+    const u = new URL(req.url); const b = body ? JSON.parse(body) : {};
+    st.calls.push(`${req.method} ${u.pathname.replace('/api/wq/ch/', '')}${b.ct ? ' ' + b.ct : ''}`);
+    if (req.method === 'GET' && /\/listen$/.test(u.pathname)) { st.serves += 1; return json({ ex: 'listen', ct: 'ct-' + st.serves, lang: 'en', story_clip: { url: 'https://r2.test/story.ogg' } }); }
+    if (b.ct && expired(b.ct)) return json({ error: 'bad_token' }, 401);
+    if (u.pathname === '/api/wq/ch/qs') return json({ questions: Object.keys(RIGHT).map((id) => ({ id, prompt: id + '?', options: order(b.ct, id), clip: { url: `https://r2.test/${id}.ogg` } })) });
+    if (u.pathname === '/api/wq/ch/qa') { const ok = order(b.ct, b.q)[b.pick] === RIGHT[b.q]; st.answered.push([b.ct, b.q, order(b.ct, b.q)[b.pick]]); return json({ ok, answer: RIGHT[b.q] }); }
+    return json({}, 404);
+  };
+  return st;
+}
+
+test('Listen got ready: with no network the questions open and each answer is told right or wrong, from the device', async () => {
+  const srv = listenServer();
+  const sw = load({ source, fetch: srv.fetch });
+  const ready = await sw.message({ type: 'listen-prepare', url: LISTEN });
+  assert.deepEqual([ready.ok, ready.questions, ready.probed], [true, 3, true]);
+  sw.net.down = true;
+  const serve = await (await sw.get(LISTEN)).json();           // the page opens the game from the kept copy
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: serve.ct, lang: 'en' })).json();
+  assert.equal(qs.questions.length, 3);
+  const q1 = qs.questions[0];
+  const good = await (await sw.post('/api/wq/ch/qa', { ct: serve.ct, q: q1.id, pick: q1.options.indexOf(RIGHT[q1.id]), lang: 'en' })).json();
+  assert.deepEqual([good.ok, good.answer], [true, RIGHT[q1.id]]);
+  const q2 = qs.questions[1];
+  const bad = await (await sw.post('/api/wq/ch/qa', { ct: serve.ct, q: q2.id, pick: q2.options.indexOf(WRONG[q2.id][0]), lang: 'en' })).json();
+  assert.deepEqual([bad.ok, bad.answer], [false, RIGHT[q2.id]]);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => [w.ex, w.state, w.answers]), [['listen', 'waiting', 2]]);
+});
+
+test('back online, Listen answers go to the run they were given in; after its token lapsed, to a fresh run by the words chosen', async () => {
+  for (const lapsed of [false, true]) {
+    let kept = null;
+    const srv = listenServer({ expired: (ct) => lapsed && ct === kept });
+    const sw = load({ source, fetch: srv.fetch });
+    await sw.message({ type: 'listen-prepare', url: LISTEN });
+    sw.net.down = true;
+    const serve = await (await sw.get(LISTEN)).json();
+    const qs = await (await sw.post('/api/wq/ch/qs', { ct: serve.ct, lang: 'en' })).json();
+    const picks = {};
+    for (const q of qs.questions) { picks[q.id] = q.id === 'q.2' ? WRONG[q.id][1] : RIGHT[q.id]; await sw.post('/api/wq/ch/qa', { ct: serve.ct, q: q.id, pick: q.options.indexOf(picks[q.id]), lang: 'en' }); }
+    kept = serve.ct;
+    sw.net.down = false; srv.answered.length = 0;
+    await sw.message({ type: 'report' });
+    await tick(60);
+    const sent = srv.answered.filter((a) => (lapsed ? a[0] !== kept : a[0] === kept));
+    assert.deepEqual(sent.map((a) => [a[1], a[2]]).sort(), Object.keys(picks).map((id) => [id, picks[id]]).sort(), lapsed ? 'a fresh run, the same words' : 'the same run');
+    assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+  }
+});

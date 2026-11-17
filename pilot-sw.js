@@ -989,6 +989,8 @@ function gamesFetch(e) {
   if (/^\/api\/sa-game\/s\/(session|batch|audio\/presign|audio\/register|status)$/.test(u.pathname)) { e.respondWith(gSaGame(req, u)); return true; }
   if (req.method === 'POST' && u.pathname === '/api/wq/ch/result') { e.respondWith(gChResult(req)); return true; }
   if (req.method === 'POST' && u.pathname === '/api/wq/ch/upload') { e.respondWith(gChUpload(req)); return true; }
+  if (req.method === 'POST' && u.pathname === '/api/wq/ch/qs') { e.respondWith(gListenQs(req)); return true; }
+  if (req.method === 'POST' && u.pathname === '/api/wq/ch/qa') { e.respondWith(gListenQa(req)); return true; }
   var am = /^\/__cb\/ch-audio\/([0-9a-f-]{36})$/.exec(u.pathname);
   if (req.method === 'PUT' && am) { e.respondWith(gChAudioPut(req, am[1])); return true; }
   return false;
@@ -1215,7 +1217,7 @@ function gChSend() {
     return list.filter(function (q) { return q.state === 'waiting'; }).reduce(function (p, q) {
       return p.then(function (go) {
         if (go === false) return false;
-        return q.kind === 'read' ? gChSendRead(q, put) : gChSendTaps(q, put);
+        return q.kind === 'read' ? gChSendRead(q, put) : q.kind === 'listen' ? gChSendListen(q, put) : gChSendTaps(q, put);
       });
     }, Promise.resolve());
   }).then(null, function () {}).then(function () { gChSending = null; });
@@ -1232,6 +1234,131 @@ self.addEventListener('message', function (e) {
         .concat(v[1].filter(function (r) { return r.local && !r.real; }).map(function (r) { return { ex: 'flight:' + (r.body && r.body.part), state: r.err ? 'refused_' + r.err : 'waiting', at: r.at }; })));
     }, function () { port.postMessage([]); }));
   }
+});
+/* ---- games lane: Listen (a story, then questions about it) with no network ----
+ * The story is a clip and plays from the device. Its questions are not in the game's page: after the story the page
+ * asks the server for them (POST ch/qs {ct}: three questions, each with three choices in an order of that run's
+ * own), and every answer is checked there (POST ch/qa {ct, q, pick} -> {ok, answer: the right choice's words}).
+ * So with no network Listen stopped after the story ("Something went wrong").
+ *   Get ready (message listen-prepare {url}): the game is asked for, and its questions; when the right choices of
+ *     those questions are not known on this device yet, that one run is answered to learn them (ch/qa says the right
+ *     words: one practice run per story per Chromebook, never a record), and a new run is asked for and kept in its
+ *     place with its questions.
+ *   no network: ch/qs is answered with the kept run's questions; ch/qa from the right words kept; the answers wait.
+ *   back online: they go to the run they were given in; when its token has lapsed (two hours), a fresh run of the
+ *     same story is asked for and each answer goes to it by the WORDS chosen (a run's order of choices is its own).
+ *     The story is named by its id, so there is always the same story to send to. */
+var G_RIGHTS = new URL('/__cb/listen-rights', self.location.origin).toString();
+function gLqKey(ct) { return new URL('/__cb/listen-qs?ct=' + encodeURIComponent(ct), self.location.origin).toString(); }
+function gJsonKept(key) { return caches.open(KEEP).then(function (c) { return c.match(key); }).then(function (r) { return r ? r.json() : null; }).then(null, function () { return null; }); }
+function gJsonKeep(key, v) { return caches.open(KEEP).then(function (c) { return c.put(key, new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json' } })); }).then(null, function () {}); }
+function gChPost(path, b) { return fetch('/api/wq/ch/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }); }
+function gListenQs(req) {
+  return req.clone().text().then(function (t) {
+    var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) { body = {}; }
+    var kept = function (res) { return gJsonKept(gLqKey(body.ct)).then(function (q) { return q && q.questions ? json({ questions: q.questions, offline: true }) : (res || json({ ok: false, offline: true }, 503)); }); };
+    return fetch(req.clone()).then(function (res) {
+      if (res.status >= 500 || res.status === 401) return kept(res);
+      if (res.ok && body.ct) res.clone().json().then(function (j) { if (j && j.questions && j.questions.some(function (q) { return q.options; })) gJsonKeep(gLqKey(body.ct), { questions: j.questions }); }, function () {});
+      return res;
+    }, function () { return kept(null); });
+  });
+}
+function gListenQa(req) {
+  return req.clone().text().then(function (t) {
+    var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) { body = {}; }
+    var here = function (res) {
+      return Promise.all([gJsonKept(gLqKey(body.ct)), gJsonKept(G_RIGHTS)]).then(function (v) {
+        var q = v[0] && (v[0].questions || []).filter(function (x) { return x.id === body.q; })[0];
+        var right = v[1] && v[1][body.q];
+        if (!q || !q.options || right == null) return res || json({ ok: false, offline: true }, 503);
+        var text = q.options[Number(body.pick)];
+        return gChServeOf(body.ct).then(function (hit) {
+          return gChWaiting().then(function (list) {
+            var e = list.filter(function (x) { return x.kind === 'listen' && x.ct === body.ct && x.state === 'waiting'; })[0]
+              || { kind: 'listen', ex: 'listen', ct: body.ct, url: hit ? gChAddress(hit.url, req) : null, answers: [], body: { taps: [] }, state: 'waiting', at: Date.now() };
+            if (!e.answers.some(function (a) { return a.q === body.q; })) { e.answers.push({ q: body.q, text: text, body: body }); e.body.taps.push(body.q); }
+            return gCh('readwrite', function (st) { st.put(e); return null; });
+          });
+        }).then(function () { return json({ ok: text === right, answer: right, offline: true }); });
+      });
+    };
+    return fetch(req.clone()).then(function (res) {
+      if (res.status >= 500 || res.status === 401) return here(res);
+      // what the server says is the right choice is kept: the next time this question is met with no network
+      if (res.ok && body.q) res.clone().json().then(function (j) { if (j && typeof j.answer === 'string') gJsonKept(G_RIGHTS).then(function (r) { r = r || {}; r[body.q] = j.answer; return gJsonKeep(G_RIGHTS, r); }); }, function () {});
+      return res;
+    }, function () { return here(null); });
+  });
+}
+/** Get ready for one Listen story (its game address) -> {ok, questions, probed, media}. */
+function gListenPrepare(url) {
+  var abs = new URL(url, self.location.origin).toString();
+  var serve = function () { return gLive(abs).then(function (u) { return fetch(u, { cache: 'no-store', headers: { accept: 'application/json' } }); }); };
+  var asked = function (ct, lang) { return gChPost('qs', { ct: ct, lang: lang }).then(function (r) { return r.ok ? r.json() : null; }); };
+  var media = function (j, q) { var m = []; if (j.story_clip && j.story_clip.url) m.push(j.story_clip.url); ((q && q.questions) || []).forEach(function (x) { if (x.clip && x.clip.url) m.push(x.clip.url); (x.option_clips || []).forEach(function (o) { if (o && o.url) m.push(o.url); }); }); return m; };
+  var keepRun = function (res, j, q) { return keep(abs, res).then(function () { return gJsonKeep(gLqKey(j.ct), { questions: q.questions }); }).then(function () { return { ok: true, questions: q.questions.length, media: media(j, q) }; }); };
+  return serve().then(function (res) {
+    if (!res.ok) return { ok: false, why: 'serve_' + res.status };
+    return res.clone().json().then(function (j) {
+      if (!j.ct) return { ok: false, why: 'no_run' };
+      return asked(j.ct, j.lang).then(function (q) {
+        if (!q || !q.questions || !q.questions.length) return { ok: false, why: 'no_questions' };
+        return gJsonKept(G_RIGHTS).then(function (rights) {
+          rights = rights || {};
+          var unknown = q.questions.filter(function (x) { return rights[x.id] == null; });
+          if (!unknown.length) return keepRun(res, j, q).then(function (o) { o.probed = false; return o; });
+          // learn the right words: this run is answered (first choice each), then another is kept in its place
+          return unknown.reduce(function (p, x) {
+            return p.then(function () { return gChPost('qa', { ct: j.ct, q: x.id, pick: 0, lang: j.lang }); }).then(function (r) { return r.ok ? r.json() : null; }).then(function (a) { if (a && typeof a.answer === 'string') rights[x.id] = a.answer; });
+          }, Promise.resolve()).then(function () { return gJsonKeep(G_RIGHTS, rights); }).then(function () {
+            if (q.questions.some(function (x) { return rights[x.id] == null; })) return { ok: false, why: 'right_answers_unknown' };
+            return serve().then(function (res2) {
+              if (!res2.ok) return { ok: false, why: 'serve_' + res2.status };
+              return res2.clone().json().then(function (j2) { return asked(j2.ct, j2.lang).then(function (q2) { return q2 && q2.questions ? keepRun(res2, j2, q2).then(function (o) { o.probed = true; return o; }) : { ok: false, why: 'no_questions' }; }); });
+            });
+          });
+        });
+      });
+    });
+  }).then(null, function () { return { ok: false, why: 'no_network' }; });
+}
+/** One waiting Listen play, sent. false = no network yet. */
+function gChSendListen(q, put) {
+  var done = function () { return gCh('readwrite', function (st) { st.delete(q.id); return null; }).then(function () { return q.url ? gListenPrepare(q.url) : null; }).then(function () { return true; }); };
+  var sendAll = function (ct, pickOf) {
+    return q.answers.reduce(function (p, a) {
+      return p.then(function (st) {
+        if (st !== 'ok') return st;
+        var b = {}; for (var k in a.body) if (Object.prototype.hasOwnProperty.call(a.body, k)) b[k] = a.body[k];
+        b.ct = ct; b.pick = pickOf(a);
+        if (b.pick < 0) return 'ok'; // a choice the fresh run does not offer: nothing honest to send for it
+        return gChPost('qa', b).then(function (r) { return r.status >= 500 ? 'down' : r.status === 401 ? 'lapsed' : 'ok'; }, function () { return 'down'; });
+      });
+    }, Promise.resolve('ok'));
+  };
+  return sendAll(q.ct, function (a) { return Number(a.body.pick); }).then(function (st) {
+    if (st === 'down') return false;
+    if (st === 'ok') return done();
+    if (!q.url) { q.state = 'refused_401'; return put(q); }
+    // the run's token has lapsed: a fresh run of the same story, each answer by the words chosen
+    return gLive(q.url).then(function (u) { return fetch(u, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
+      if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
+      return res.json().then(function (j) {
+        return gChPost('qs', { ct: j.ct, lang: j.lang }).then(function (r) { return r.ok ? r.json() : null; }).then(function (qs) {
+          if (!qs || !qs.questions) return false;
+          var opt = {}; qs.questions.forEach(function (x) { opt[x.id] = x.options || []; });
+          return sendAll(j.ct, function (a) { return (opt[a.q] || []).indexOf(a.text); }).then(function (st2) { return st2 === 'ok' ? done() : false; });
+        });
+      });
+    }, function () { return false; });
+  });
+}
+self.addEventListener('message', function (e) {
+  var d = e.data || {};
+  var port = e.ports && e.ports[0];
+  if (d.type !== 'listen-prepare' || !port || typeof d.url !== 'string') return;
+  e.waitUntil(gListenPrepare(d.url).then(function (out) { port.postMessage(out); }));
 });
 /* ---- games lane: the pilot's own files on the device follow the pilot's release ----
  * boot.js, games-read.js, cb-fit.css, the start page, the Get-ready steps and the child's battery page (which the

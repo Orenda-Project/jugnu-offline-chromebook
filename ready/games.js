@@ -127,9 +127,18 @@
     for (const p of pages) await frame(p, 3000);
     // an exercise already kept is not asked for again: every ask is a serve on the server (a second serve of the
     // Grade 1 dots is a practice run, and the first one's record is then never played)
+    // Listen is got ready by the worker itself: the game, its questions and their right choices (pilot-sw.js, "Listen")
+    const listens = api.filter((u) => /\/listen\?/.test(u));
+    api = api.filter((u) => listens.indexOf(u) < 0);
     const fresh = await notKept(api.map(abs));
     let named = [];
     for (const u of api) named = named.concat(media(fresh.indexOf(abs(u)) >= 0 ? await text(u) : await fetch(u).then((r) => r.text(), () => '')));
+    let heard = 0;
+    for (const u of listens) {
+      const r = await ask({ type: 'listen-prepare', url: abs(u) }, 120000);
+      if (r && r.ok) { heard += 1; named = named.concat(r.media || []); } else log(`Listen: ${u.split('pid=')[1] || 'a story'} is not ready for offline (${r ? r.why : 'no answer'})`);
+    }
+    if (listens.length) log(`Listen: ${heard} of ${listens.length} stories with their questions`);
     named = uniq(named).map(abs);
     await keep(named, 'the games\' voices', 98, 99);
     await warm(['/wq/wq-g1.js', '/wq/wq-trail.js', '/wq/wq-challenge.js', '/wq/wq-read-live.js', '/wq/wq-liveread.js', '/wq/wq-liveread.css', '/wq/wq-readalong.js', '/wq/wq-pace.js', '/wq/wq-pace.css', '/wq/wq-moment.js', '/wq/wq-moment.css'].map(abs));
