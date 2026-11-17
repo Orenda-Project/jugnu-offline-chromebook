@@ -1045,8 +1045,27 @@ self.addEventListener('message', function (e) {
  * are kept here with the questions they answer, and the page gets its end card (the score worked out on the device,
  * as the server would: the questions carry their answers). Back online, the game is asked for again: when the server
  * serves the SAME questions (an unfinished first play is served again as it was for a day; the Grade 1 dots and the
- * warm-up never change), the taps go up with the new token. Other questions: the taps are not sent, and say so. */
+ * warm-up never change), the taps go up with the new token. Other questions: the taps are not sent, and say so.
+ *
+ * A LATE result (18 Nov 2026). The run a result belongs to is the run it was played in, and Jugnu now takes a result
+ * for that run after its token has lapsed and after its row was closed (a day), when the request says it is late
+ * (NIETE-Rumi #5015, switch web_quiz_challenge_late_result; `late: { at: when the child finished, this device's
+ * clock }`). So every waiting result is sent to its own run FIRST, saying so. Only when the server refuses that (401:
+ * the switch is off there, or the run is older than 45 days) is a fresh serve tried as before. A result the server
+ * will not take either way is KEPT (with its recording) and offered again twice a day while its run is young enough
+ * to be taken; it is never dropped while it could still count. 409 from the run itself means it has its result. */
+var G_LATE_MAX_MS = 45 * 24 * 60 * 60 * 1000;   // how old a run may be for Jugnu to take its late result
+var G_AGAIN_MS = 12 * 60 * 60 * 1000;           // a result the server would not take is offered again this often
+var G_FULL_MS = 6 * 60 * 60 * 1000;             // the day's readings are used up (429): tried again after this
 var gCh = function (mode, fn) { return grec('ch', mode, fn); };
+/** A copy of a waiting result's body that says it is late: when the child finished, by this device. */
+function gLate(body, q) { var b = {}; for (var k in body) if (Object.prototype.hasOwnProperty.call(body, k)) b[k] = body[k]; b.late = { at: q.at }; return b; }
+/** Is this waiting result to be sent now? waiting: yes, unless it was told to wait; not taken before: twice a day. */
+function gChDue(q, now) {
+  if (q.wait && q.wait > now) return false;
+  if (q.state === 'waiting') return true;
+  return q.state === 'questions_changed' && now - q.at < G_LATE_MAX_MS;
+}
 function gChWaiting() { return gCh('readonly', function (s) { return s.getAll(); }).then(function (l) { return l || []; }, function () { return []; }); }
 /** A kept serve's real address: saved copies are filed under the home's children ("~h<tag>~", lane/home); the link
  *  itself is the one in the address of the page that asks (its referrer). */
@@ -1140,51 +1159,68 @@ function gChAudioPut(req, id) {
     });
   }).then(null, function () { return json({ error: 'not_kept' }, 507); });
 }
-/** One kept reading, sent: fresh serve (the same story) -> the server's upload place -> the recording -> the result. */
+/** One kept reading, sent. First for the run it was read in (a late result: see above); when the server will not
+ *  take that, to a fresh serve of the SAME story; neither: it waits, with its recording. false = no network yet. */
 function gChSendRead(q, put) {
   var drop = function () { return gAudio('readwrite', function (st) { st.delete(q.audio); return null; }).then(null, function () {}); };
   var jsonPost = function (path, b) { return fetch('/api/wq/ch/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }); };
-  return gLive(q.url).then(function (url) { return fetch(url, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
-    if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
-    return res.clone().json().then(function (fresh) {
-      if (!fresh.ct || !fresh.story || fresh.story.text !== q.story) { q.state = 'questions_changed'; return drop().then(function () { return put(q); }); }
-      return gAudio('readonly', function (st) { return st.get(q.audio); }).then(function (row) {
-        if (!row || !row.bytes) { q.state = 'recording_missing'; return put(q); }
-        var ask = {}; for (var k in row.ask) if (Object.prototype.hasOwnProperty.call(row.ask, k)) ask[k] = row.ask[k];
-        ask.ct = fresh.ct;
-        return jsonPost('upload', ask).then(function (up) {
-          if (up.status >= 500) return false;
-          if (!up.ok) { q.state = 'refused_' + up.status; return put(q); }
-          return up.json().then(function (u) {
-            var up2 = G_BUCKET.test(new URL(u.put_url).hostname) ? gPutAway(u.put_url, u.content_type || row.type, row.bytes)
-              : fetch(u.put_url, { method: 'PUT', headers: { 'content-type': u.content_type || row.type }, body: row.bytes });
-            return up2.then(function (pr) {
-              if (!pr.ok) return false;
-              var b = {}; for (var k2 in q.body) if (Object.prototype.hasOwnProperty.call(q.body, k2)) b[k2] = q.body[k2];
-              b.ct = fresh.ct; b.key = u.key;
-              return jsonPost('result', b).then(function (out) {
-                if (out.status >= 500) return false;
-                if (!out.ok) { q.state = 'refused_' + out.status; return put(q); }
-                return drop().then(function () { return gCh('readwrite', function (st) { st.delete(q.id); return null; }); }).then(function () {
-                  fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game_sent: { ex: 'read', recording: true, lag_s: Math.round((Date.now() - q.at) / 1000) } }) }).catch(function () {});
-                  return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (nx) { return keep(q.url, nx); }, function () { return null; });
-                });
-              });
-            });
-          });
+  var copy = function (o) { var c = {}; for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) c[k] = o[k]; return c; };
+  var hold = function (state, ms) { q.state = state; q.wait = Date.now() + ms; return put(q); };
+  var done = function (already) {
+    return drop().then(function () { return gCh('readwrite', function (st) { st.delete(q.id); return null; }); }).then(function () {
+      fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game_sent: { ex: 'read', recording: true, already: !!already, lag_s: Math.round((Date.now() - q.at) / 1000) } }) }).catch(function () {});
+      return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (nx) { return keep(q.url, nx); }, function () { return null; });
+    });
+  };
+  // what the server said: 'ok' | 'down' (no network: later) | 'lapsed' (401) | 'done' (409: the run has its reading)
+  //                       | 'full' (429: enough readings for today) | 'refused_<status>'
+  var said = function (res) { return res.status >= 500 ? 'down' : res.status === 401 ? 'lapsed' : res.status === 409 ? 'done' : res.status === 429 ? 'full' : res.ok ? 'ok' : 'refused_' + res.status; };
+  /** The recording and its result, with the token `ct` (late: for the run it was read in). */
+  var send = function (row, ct, late) {
+    var ask = copy(row.ask); ask.ct = ct; if (late) ask.late = late;
+    return jsonPost('upload', ask).then(function (up) {
+      if (said(up) !== 'ok') return said(up);
+      return up.json().then(function (u) {
+        var up2 = G_BUCKET.test(new URL(u.put_url).hostname) ? gPutAway(u.put_url, u.content_type || row.type, row.bytes)
+          : fetch(u.put_url, { method: 'PUT', headers: { 'content-type': u.content_type || row.type }, body: row.bytes });
+        return up2.then(function (pr) {
+          if (!pr.ok) return 'down';
+          var b = copy(q.body); b.ct = ct; b.key = u.key; if (late) b.late = late;
+          return jsonPost('result', b).then(said);
         });
       });
+    }).then(null, function () { return 'down'; });
+  };
+  var settle = function (st) {
+    if (st === 'down') return false;
+    if (st === 'ok' || st === 'done') return done(st === 'done');
+    if (st === 'full') return hold('waiting', G_FULL_MS);
+    if (st === 'lapsed') return hold('questions_changed', G_AGAIN_MS);   // kept, with its recording
+    q.state = st; return put(q);
+  };
+  return gAudio('readonly', function (st) { return st.get(q.audio); }).then(function (row) {
+    if (!row || !row.bytes) { q.state = 'recording_missing'; return put(q); }
+    return send(row, q.body.ct, { at: q.at }).then(function (st) {
+      if (st !== 'lapsed') return settle(st);
+      // the server takes no late result for that run: a fresh serve, and only of the same story
+      return gLive(q.url).then(function (url) { return fetch(url, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
+        if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
+        return res.clone().json().then(function (fresh) {
+          if (!fresh.ct || !fresh.story || fresh.story.text !== q.story) return settle('lapsed');
+          return send(row, fresh.ct, null).then(settle);
+        });
+      }, function () { return false; });
     });
   }).then(null, function () { return false; });
 }
-/** One waiting tap game, sent: first to the run the child really played (its token lives two hours), and only when
- *  that token has lapsed to a fresh serve of the same questions. false = no network yet (stop, try later). */
+/** One waiting tap game, sent: first to the run the child really played, saying it is late (see above); only when
+ *  the server refuses that, to a fresh serve of the same questions. false = no network yet (stop, try later). */
 function gChSendTaps(q, put) {
   var same = function (a, b) { return JSON.stringify(a || []) === JSON.stringify(b || []); };
   var post = function (b) { return fetch('/api/wq/ch/result', { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }); };
-  var sent = function () {
+  var sent = function (already) {
     return gCh('readwrite', function (s) { s.delete(q.id); return null; }).then(function () {
-      fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game_sent: { ex: q.ex, answers: (q.body.taps || q.body.answers || []).length, lag_s: Math.round((Date.now() - q.at) / 1000) } }) }).catch(function () {});
+      fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game_sent: { ex: q.ex, answers: (q.body.taps || q.body.answers || []).length, already: !!already, lag_s: Math.round((Date.now() - q.at) / 1000) } }) }).catch(function () {});
       // the kept serve is now a finished one: keep the next, so the next play with no network starts from a live one
       return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (nx) { return keep(q.url, nx); }, function () { return null; });
     });
@@ -1193,20 +1229,22 @@ function gChSendTaps(q, put) {
     return gLive(q.url).then(function (url) { return fetch(url, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
       if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
       return res.clone().json().then(function (fr) {
-        if (!fr.ct || !same(fr.items, q.items)) { q.state = 'questions_changed'; return put(q); }
+        if (!fr.ct || !same(fr.items, q.items)) { q.state = 'questions_changed'; q.wait = Date.now() + G_AGAIN_MS; return put(q); }
         var b = {}; for (var k in q.body) if (Object.prototype.hasOwnProperty.call(q.body, k)) b[k] = q.body[k];
         b.ct = fr.ct;
         return post(b).then(function (out) {
           if (out.status >= 500) return false;
           if (!out.ok) { q.state = 'refused_' + out.status; return put(q); }
-          return sent();
+          return sent(false);
         }, function () { return false; });
       });
     }, function () { return false; });
   };
-  return post(q.body).then(function (first) {
+  return post(gLate(q.body, q)).then(function (first) {
     if (first.status >= 500) return false;
-    return first.ok ? sent() : fresh();
+    if (first.ok) return sent(false);
+    if (first.status === 409) return sent(true);   // that run already has its result: nothing more to send for it
+    return fresh();
   }, function () { return false; });
 }
 var gChSending = null;
@@ -1214,7 +1252,14 @@ function gChSend() {
   if (gChSending) return gChSending;
   var put = function (q) { return gCh('readwrite', function (s) { s.put(q); return null; }); };
   gChSending = gChWaiting().then(function (list) {
-    return list.filter(function (q) { return q.state === 'waiting'; }).reduce(function (p, q) {
+    var now = Date.now();
+    // too old for the server to take any more: it says so, and a child's recording does not stay on the device
+    list.filter(function (q) { return q.state === 'questions_changed' && now - q.at >= G_LATE_MAX_MS; }).forEach(function (q) {
+      q.state = 'too_old';
+      if (q.audio) gAudio('readwrite', function (st) { st.delete(q.audio); return null; }).then(null, function () {});
+      put(q);
+    });
+    return list.filter(function (q) { return gChDue(q, now); }).reduce(function (p, q) {
       return p.then(function (go) {
         if (go === false) return false;
         return q.kind === 'read' ? gChSendRead(q, put) : q.kind === 'listen' ? gChSendListen(q, put) : gChSendTaps(q, put);
@@ -1326,18 +1371,20 @@ function gListenPrepare(url) {
 /** One waiting Listen play, sent. false = no network yet. */
 function gChSendListen(q, put) {
   var done = function () { return gCh('readwrite', function (st) { st.delete(q.id); return null; }).then(function () { return q.url ? gListenPrepare(q.url) : null; }).then(function () { return true; }); };
-  var sendAll = function (ct, pickOf) {
+  var sendAll = function (ct, pickOf, late) {
     return q.answers.reduce(function (p, a) {
       return p.then(function (st) {
         if (st !== 'ok') return st;
         var b = {}; for (var k in a.body) if (Object.prototype.hasOwnProperty.call(a.body, k)) b[k] = a.body[k];
         b.ct = ct; b.pick = pickOf(a);
+        if (late) b.late = { at: q.at };
         if (b.pick < 0) return 'ok'; // a choice the fresh run does not offer: nothing honest to send for it
         return gChPost('qa', b).then(function (r) { return r.status >= 500 ? 'down' : r.status === 401 ? 'lapsed' : 'ok'; }, function () { return 'down'; });
       });
     }, Promise.resolve('ok'));
   };
-  return sendAll(q.ct, function (a) { return Number(a.body.pick); }).then(function (st) {
+  // to the run they were given in, saying they are late: its token may have lapsed (see "A LATE result" above)
+  return sendAll(q.ct, function (a) { return Number(a.body.pick); }, true).then(function (st) {
     if (st === 'down') return false;
     if (st === 'ok') return done();
     if (!q.url) { q.state = 'refused_401'; return put(q); }
@@ -1348,7 +1395,7 @@ function gChSendListen(q, put) {
         return gChPost('qs', { ct: j.ct, lang: j.lang }).then(function (r) { return r.ok ? r.json() : null; }).then(function (qs) {
           if (!qs || !qs.questions) return false;
           var opt = {}; qs.questions.forEach(function (x) { opt[x.id] = x.options || []; });
-          return sendAll(j.ct, function (a) { return (opt[a.q] || []).indexOf(a.text); }).then(function (st2) { return st2 === 'ok' ? done() : false; });
+          return sendAll(j.ct, function (a) { return (opt[a.q] || []).indexOf(a.text); }, false).then(function (st2) { return st2 === 'ok' ? done() : false; });
         });
       });
     }, function () { return false; });

@@ -237,11 +237,12 @@ test('a reading finished with no network is kept on the device and the page is t
   assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => [w.ex, w.state]), [['read', 'waiting']]);
 });
 
-test('back online the kept reading goes up for the SAME story: upload, then the result with the new token', async () => {
+test('a server that takes no late result: the kept reading goes up for the SAME story on a fresh serve: upload, then the result with the new token', async () => {
   const seen = [];
   const sw = load({ source, fetch: async (req, body) => {
     const u = new URL(req.url);
     if (req.method === 'GET') return readServe('ct-fresh');
+    if (u.pathname === '/api/wq/ch/upload' && JSON.parse(body).ct === 'ct-kept') return json({ error: 'bad_token' }, 401);   // two hours have passed
     if (u.pathname === '/api/wq/ch/upload') { seen.push(['upload', JSON.parse(body)]); return json({ put_url: 'https://r2.test/put/abc', content_type: 'audio/webm', key: 'child-voice/sandbox/abc.webm' }); }
     if (u.host === 'r2.test') { seen.push(['put', body, req.headers.get('content-type')]); return new Response('', { status: 200 }); }
     if (u.pathname === '/api/wq/ch/result') { seen.push(['result', JSON.parse(body)]); return json({ pending: true }); }
@@ -258,16 +259,21 @@ test('back online the kept reading goes up for the SAME story: upload, then the 
   assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
 });
 
-test('another story on the fresh serve: the reading is not sent as a reading of it, and the recording is dropped', async () => {
+test('another story on the fresh serve: the reading is not sent as a reading of it', async () => {
   const seen = [];
-  const sw = load({ source, fetch: (req) => { seen.push(req.method + ' ' + new URL(req.url).pathname); return req.method === 'GET' ? readServe('ct-fresh', 'Another story altogether.') : json({}); } });
+  const sw = load({ source, fetch: (req, body) => {
+    const p = new URL(req.url).pathname;
+    if (req.method === 'GET') return readServe('ct-fresh', 'Another story altogether.');
+    const b = JSON.parse(body || '{}');
+    seen.push(p.split('/').pop() + ' ' + b.ct);
+    return b.ct === 'ct-kept' ? json({ error: 'bad_token' }, 401) : json({});   // no late result taken; two hours have passed
+  } });
   await readOffline(sw);
   sw.net.down = false;
   await sw.message({ type: 'report' });
   await tick(40);
-  assert.deepEqual(seen.filter((x) => /upload|result/.test(x)), []);
+  assert.deepEqual(seen.filter((x) => /upload|result/.test(x)), ['upload ct-kept'], 'offered to its own run only, never to the other story');
   assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['questions_changed']);
-  assert.equal(await sw.message({ type: 'games-audio-kept' }), 0);
 });
 
 test('back online within the token\'s life: the taps go to the run they were played in (no new serve is asked for)', async () => {
@@ -452,4 +458,186 @@ test('back online, Listen answers go to the run they were given in; after its to
     assert.deepEqual(sent.map((a) => [a[1], a[2]]).sort(), Object.keys(picks).map((id) => [id, picks[id]]).sort(), lapsed ? 'a fresh run, the same words' : 'the same run');
     assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
   }
+});
+
+// ---- games lane: a result that arrives late goes to the run it was played in ----
+// Jugnu takes a late result for its own run when the request says when it was played (NIETE-Rumi #5015,
+// web_quiz_challenge_late_result): the run's token may have lapsed (two hours) and its row may have been closed (a
+// day). So the device says so on every waiting result, and only falls back to a fresh serve when the server refuses.
+const HOUR = 3600 * 1000;
+/** The clock of the worker (it shares this process's Date) moved on by `ms` while `fn` runs. */
+async function clockPlus(ms, fn) {
+  const real = Date.now;
+  Date.now = () => real() + ms;
+  try { return await fn(); } finally { Date.now = real; }
+}
+
+test('waiting taps go to the run they were played in and say when they were played; a server that takes late results needs no new serve', async () => {
+  const sent = []; const gets = [];
+  const sw = load({ source, fetch: (req, body) => {
+    const u = new URL(req.url);
+    if (req.method === 'GET') { gets.push(u.pathname); return serve('ct-fresh', [9, 4, 10]); }   // other questions by now
+    const b = JSON.parse(body);
+    if (u.pathname === '/api/wq/ch/result') {
+      // the run's token lapsed days ago: taken only as a late result
+      if (b.ct === 'ct-kept' && b.late && typeof b.late.at === 'number') { sent.push(b); return json({ score: { correct: 2, n: 3, stopped: false } }); }
+      return json({ error: 'bad_token' }, 401);
+    }
+    return json({}, 404);
+  } });
+  await sw.kept(EX, serve('ct-kept'));
+  sw.net.down = true;
+  const before = Date.now();
+  await sw.post('/api/wq/ch/result', TAPS);
+  sw.net.down = false; gets.length = 0;
+  await clockPlus(3 * 24 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(30); });
+  assert.equal(sent.length, 1, 'sent once, to the run it was played in');
+  assert.deepEqual(sent[0].taps, TAPS.taps);
+  assert.ok(sent[0].late.at >= before && sent[0].late.at <= Date.now(), 'the time the child finished, by this device');
+  assert.deepEqual(gets.filter((p) => /\/numbers$/.test(p)).length <= 1, true);   // at most the next serve kept for the next play
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('the run already has its result (409): the waiting taps are done, and are not sent to another run', async () => {
+  const posts = [];
+  const sw = load({ source, fetch: (req, body) => {
+    if (req.method === 'GET') return serve('ct-fresh');   // the same questions: a second result would count twice
+    if (new URL(req.url).pathname !== '/api/wq/ch/result') return json({});
+    const b = JSON.parse(body); posts.push(b.ct);
+    return b.ct === 'ct-kept' ? json({ error: 'already_done' }, 409) : json({ score: { correct: 2, n: 3, stopped: false } });
+  } });
+  await sw.kept(EX, serve('ct-kept'));
+  sw.net.down = true;
+  await sw.post('/api/wq/ch/result', TAPS);
+  sw.net.down = false;
+  await sw.message({ type: 'report' });
+  await tick(30);
+  assert.deepEqual(posts, ['ct-kept']);
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('a server that takes no late result and serves other questions: the taps are kept and asked again twice a day, not on every page', async () => {
+  let takes = false; const posts = [];
+  const sw = load({ source, fetch: (req, body) => {
+    if (req.method === 'GET') return serve('ct-fresh', [9, 4, 10]);
+    if (new URL(req.url).pathname !== '/api/wq/ch/result') return json({});
+    const b = JSON.parse(body); posts.push(b.ct);
+    return takes && b.ct === 'ct-kept' && b.late ? json({ score: { correct: 2, n: 3, stopped: false } }) : json({ error: 'bad_token' }, 401);
+  } });
+  await sw.kept(EX, serve('ct-kept'));
+  sw.net.down = true;
+  await sw.post('/api/wq/ch/result', TAPS);
+  sw.net.down = false;
+  await sw.message({ type: 'report' }); await tick(30);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['questions_changed']);
+  const first = posts.length;
+  await sw.message({ type: 'report' }); await tick(30);
+  assert.equal(posts.length, first, 'not asked again a moment later');
+  takes = true;   // the server's switch is turned on
+  await clockPlus(13 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(30); });
+  assert.equal(posts[posts.length - 1], 'ct-kept');
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), [], 'sent when the server takes it');
+});
+
+test('a kept reading goes up for the run it was read in, as a late result: no new serve, the same story or not', async () => {
+  const seen = [];
+  const sw = load({ source, fetch: async (req, body) => {
+    const u = new URL(req.url);
+    if (req.method === 'GET') { seen.push(['serve']); return readServe('ct-fresh', 'Another story altogether.'); }
+    if (u.pathname === '/api/wq/ch/upload') { const b = JSON.parse(body); seen.push(['upload', b]); return b.ct === 'ct-kept' && b.late ? json({ put_url: 'https://r2.test/put/abc', content_type: 'audio/webm', key: 'child-voice/sandbox/abc.webm' }) : json({ error: 'bad_token' }, 401); }
+    if (u.host === 'r2.test') { seen.push(['put', body]); return new Response('', { status: 200 }); }
+    if (u.pathname === '/api/wq/ch/result') { seen.push(['result', JSON.parse(body)]); return json({ pending: true }); }
+    return json({}, 404);
+  } });
+  await readOffline(sw);
+  sw.net.down = false;
+  await clockPlus(3 * 24 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(40); });
+  assert.deepEqual(seen.slice(0, 3).map((x) => x[0]), ['upload', 'put', 'result']);
+  assert.equal(seen[0][1].ct, 'ct-kept');
+  assert.equal(typeof seen[0][1].late.at, 'number');
+  assert.equal(seen[1][1], 'VOICE');
+  assert.deepEqual([seen[2][1].ct, seen[2][1].key, typeof seen[2][1].late.at], ['ct-kept', 'child-voice/sandbox/abc.webm', 'number']);
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 0);
+});
+
+test('a reading the server will not take yet (no late result, another story): the recording is KEPT and offered again later', async () => {
+  let takes = false; const seen = [];
+  const sw = load({ source, fetch: async (req, body) => {
+    const u = new URL(req.url);
+    if (req.method === 'GET') return readServe('ct-fresh', 'Another story altogether.');
+    if (u.pathname === '/api/wq/ch/upload') { const b = JSON.parse(body); seen.push('upload ' + b.ct); return takes && b.ct === 'ct-kept' && b.late ? json({ put_url: 'https://r2.test/put/abc', content_type: 'audio/webm', key: 'k.webm' }) : json({ error: 'bad_token' }, 401); }
+    if (u.host === 'r2.test') return new Response('', { status: 200 });
+    if (u.pathname === '/api/wq/ch/result') { seen.push('result'); return json({ pending: true }); }
+    return json({}, 404);
+  } });
+  await readOffline(sw);
+  sw.net.down = false;
+  await sw.message({ type: 'report' }); await tick(40);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['questions_changed']);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 1, 'the recording is still on the device');
+  takes = true;
+  await clockPlus(13 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(40); });
+  assert.equal(seen[seen.length - 1], 'result');
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 0);
+});
+
+test("the day's readings are used up (429): the reading waits with its recording and goes up later", async () => {
+  let full = true; let results = 0;
+  const sw = load({ source, fetch: async (req, body) => {
+    const u = new URL(req.url);
+    if (req.method === 'GET') return readServe('ct-fresh');
+    if (u.pathname === '/api/wq/ch/upload') return full ? json({ error: 'enough_for_today' }, 429) : json({ put_url: 'https://r2.test/put/abc', content_type: 'audio/webm', key: 'k.webm' });
+    if (u.host === 'r2.test') return new Response('', { status: 200 });
+    if (u.pathname === '/api/wq/ch/result') { results += 1; return json({ pending: true }); }
+    return json({}, 404);
+  } });
+  await readOffline(sw);
+  sw.net.down = false;
+  await sw.message({ type: 'report' }); await tick(40);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['waiting']);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 1);
+  full = false;
+  await sw.message({ type: 'report' }); await tick(40);
+  assert.equal(results, 0, 'not asked again at once');
+  await clockPlus(7 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(40); });
+  assert.equal(results, 1);
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('Listen answers given with no network say when they were given, so a lapsed run still takes them (its own order of choices)', async () => {
+  let kept = null; const late = [];
+  const srv = listenServer();
+  const sw = load({ source, fetch: (req, body) => {
+    const u = new URL(req.url); const b = body ? JSON.parse(body) : {};
+    if (u.pathname === '/api/wq/ch/qa' && b.ct === kept) { late.push(b.late); if (!b.late) return json({ error: 'bad_token' }, 401); }
+    return srv.fetch(req, body);
+  } });
+  await sw.message({ type: 'listen-prepare', url: LISTEN });
+  sw.net.down = true;
+  const s = await (await sw.get(LISTEN)).json();
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: s.ct, lang: 'en' })).json();
+  for (const q of qs.questions) await sw.post('/api/wq/ch/qa', { ct: s.ct, q: q.id, pick: q.options.indexOf(RIGHT[q.id]), lang: 'en' });
+  kept = s.ct;
+  sw.net.down = false; srv.answered.length = 0;
+  await clockPlus(3 * 24 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(60); });
+  assert.equal(late.length, 3);
+  assert.ok(late.every((l) => l && typeof l.at === 'number'), 'every answer says when it was given');
+  assert.deepEqual(srv.answered.map((a) => a[0]), [kept, kept, kept], 'all three to the run they were given in');
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('a kept reading no server took for 45 days is given up: it says so, and the recording leaves the device', async () => {
+  const sw = load({ source, fetch: (req) => (req.method === 'GET' ? readServe('ct-fresh', 'Another story altogether.') : json({ error: 'bad_token' }, 401)) });
+  await readOffline(sw);
+  sw.net.down = false;
+  await sw.message({ type: 'report' }); await tick(40);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 1);
+  await clockPlus(44 * 24 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(40); });
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['questions_changed']);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 1, 'still kept at 44 days');
+  await clockPlus(46 * 24 * HOUR, async () => { await sw.message({ type: 'report' }); await tick(40); });
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['too_old']);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 0);
 });
