@@ -653,3 +653,22 @@ test("a new release reads the pilot's own files past the browser's own cache (it
   await sw.message({ type: 'release' });
   assert.deepEqual(how, { '/__cb/boot.js': 'reload', '/sa/play.html': 'reload' });
 });
+
+test('a Listen answer the server refuses (not a lapsed token) is not dropped: the play stays in the outbox and says why', async () => {
+  let kept = null;
+  const srv = listenServer();
+  const sw = load({ source, fetch: (req, body) => {
+    const u = new URL(req.url); const b = body ? JSON.parse(body) : {};
+    if (u.pathname === '/api/wq/ch/qa' && b.ct === kept) return json({ error: 'bad_request' }, 400);
+    return srv.fetch(req, body);
+  } });
+  await sw.message({ type: 'listen-prepare', url: LISTEN });
+  sw.net.down = true;
+  const s = await (await sw.get(LISTEN)).json();
+  const qs = await (await sw.post('/api/wq/ch/qs', { ct: s.ct, lang: 'en' })).json();
+  for (const q of qs.questions) await sw.post('/api/wq/ch/qa', { ct: s.ct, q: q.id, pick: 0, lang: 'en' });
+  kept = s.ct;
+  sw.net.down = false;
+  await sw.message({ type: 'report' }); await tick(60);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => [w.ex, w.state, w.answers]), [['listen', 'refused_400', 3]]);
+});

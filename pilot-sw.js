@@ -1382,7 +1382,8 @@ function gChSendListen(q, put) {
         b.ct = ct; b.pick = pickOf(a);
         if (late) b.late = { at: q.at };
         if (b.pick < 0) return 'ok'; // a choice the fresh run does not offer: nothing honest to send for it
-        return gChPost('qa', b).then(function (r) { return r.status >= 500 ? 'down' : r.status === 401 ? 'lapsed' : 'ok'; }, function () { return 'down'; });
+        // an answer the server refuses for another reason is not dropped: the play stays in the outbox and says why
+        return gChPost('qa', b).then(function (r) { return r.ok ? 'ok' : r.status >= 500 ? 'down' : r.status === 401 ? 'lapsed' : 'refused_' + r.status; }, function () { return 'down'; });
       });
     }, Promise.resolve('ok'));
   };
@@ -1390,6 +1391,7 @@ function gChSendListen(q, put) {
   return sendAll(q.ct, function (a) { return Number(a.body.pick); }, true).then(function (st) {
     if (st === 'down') return false;
     if (st === 'ok') return done();
+    if (st !== 'lapsed') { q.state = st; return put(q); }
     if (!q.url) { q.state = 'refused_401'; return put(q); }
     // the run's token has lapsed: a fresh run of the same story, each answer by the words chosen
     return gLive(q.url).then(function (u) { return fetch(u, { cache: 'no-store', headers: { accept: 'application/json' } }); }).then(function (res) {
@@ -1398,7 +1400,11 @@ function gChSendListen(q, put) {
         return gChPost('qs', { ct: j.ct, lang: j.lang }).then(function (r) { return r.ok ? r.json() : null; }).then(function (qs) {
           if (!qs || !qs.questions) return false;
           var opt = {}; qs.questions.forEach(function (x) { opt[x.id] = x.options || []; });
-          return sendAll(j.ct, function (a) { return (opt[a.q] || []).indexOf(a.text); }, false).then(function (st2) { return st2 === 'ok' ? done() : false; });
+          return sendAll(j.ct, function (a) { return (opt[a.q] || []).indexOf(a.text); }, false).then(function (st2) {
+            if (st2 === 'ok') return done();
+            if (st2 === 'down' || st2 === 'lapsed') return false;
+            q.state = st2; return put(q);
+          });
         });
       });
     }, function () { return false; });
