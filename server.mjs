@@ -92,6 +92,13 @@ const READY_ONLY = (process.env.READY_ONLY || '').split(',').map((f) => f.trim()
 function readyList() {
   try { return fs.readdirSync(path.join(HERE, 'ready')).filter((f) => /^[a-z0-9-]+\.js$/.test(f) && (!READY_ONLY.length || READY_ONLY.includes(f))).sort(); } catch (e) { return []; }
 }
+/** SW_STAMP_FILE=<path> (a rig's setting, never a service's): the text in that file is added to the worker file as a
+ *  last comment line, so a rig can play "the pilot was deployed since this Chromebook last opened it" (a worker file
+ *  that has changed) without touching pilot-sw.js. rig/handover-check.mjs writes it. */
+const SW_STAMP_FILE = process.env.SW_STAMP_FILE || '';
+function swStamp() {
+  try { return SW_STAMP_FILE ? fs.readFileSync(SW_STAMP_FILE, 'utf8').replace(/[^\w .:-]/g, '').slice(0, 80) : ''; } catch (e) { return ''; }
+}
 const BOOT_TAG = '<script src="/__cb/boot.js" defer></script>';
 const TEXT_RX = /^(text\/html|application\/javascript|text\/javascript|application\/json|text\/css|application\/manifest\+json)/i;
 
@@ -233,7 +240,9 @@ const server = http.createServer((req, res) => {
   const local = LOCAL[url.pathname];
   if (local && req.method === 'GET') {
     res.writeHead(200, { 'content-type': local[1], 'cache-control': 'no-cache', 'service-worker-allowed': '/' });
-    fs.createReadStream(path.join(HERE, local[0])).pipe(res);
+    const stamp = local[0] === 'pilot-sw.js' ? swStamp() : '';
+    if (stamp) res.end(Buffer.concat([fs.readFileSync(path.join(HERE, local[0])), Buffer.from(`\n// ${stamp}\n`)])); // (rig only: SW_STAMP_FILE)
+    else fs.createReadStream(path.join(HERE, local[0])).pipe(res);
     log({ m: req.method, p: req.url, s: 200, local: true, ua, ms: Date.now() - started });
     return;
   }

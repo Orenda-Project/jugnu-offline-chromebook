@@ -4,6 +4,8 @@
 #   $P/device-key.txt  $P/roster-*.json  $P/sandbox-internal-key.txt  (and ./cb-config.json, git-ignored)
 # HOME_TTL_S=45 makes a signed home run out in 45 s, to watch it being renewed.
 # READY_ONLY=videos.js offers only that Get-ready step file (a quick run of one area).
+# logs/sw-stamp.txt, when a rig writes it, is added to the worker file as a comment: "a new version was deployed"
+# (rig/handover-check.mjs).
 set -e
 cd "$(dirname "$0")/.."
 : "${P:?set P to the private folder}"
@@ -13,4 +15,5 @@ export DEVICE_KEY="$(cat "$P/device-key.txt")"
 export ROSTER_FILE="${ROSTER_FILE:-$(ls "$P"/roster-*.json | head -1)}"
 export HUB_SIGNING_KEY="$(INTERNAL_API_KEY="$(cat "$P/sandbox-internal-key.txt")" node tools/derive-hub-key.mjs)"
 export PORT="${PORT:-8813}"
+export SW_STAMP_FILE="${SW_STAMP_FILE:-logs/sw-stamp.txt}"
 exec node server.mjs

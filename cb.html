@@ -375,6 +375,37 @@
       document.body.appendChild(f);
     });
   }
+  // The child home in a hidden frame. A frame that comes back without the home in it (a request that was never
+  // answered leaves it blank) is taken off the page and the home is opened once more before the step gives up.
+  function homeFrame(tries) {
+    return frame('/h/' + CFG.hub, 7000).then(function (f) {
+      var d = f.contentDocument;
+      if (d && d.querySelector('a.wq-door')) return f;
+      if (f.remove) f.remove();
+      if (tries > 1) return homeFrame(tries - 1);
+      throw new Error('the child home did not open');
+    });
+  }
+  /* A NEWER WORKER ON ITS WAY IN (18 Nov 2026). Registering the worker is when Chrome looks for a new worker file
+   * (the pilot was deployed since this Chromebook last opened it). The new one installs and takes over a second or
+   * two later, and a request the outgoing worker has not answered by then is never answered: the hidden frame of
+   * the "Child home" step stayed blank, 4 runs in 7. So Get ready looks for a new worker first and waits until it
+   * is in charge. With no network to look with, or after `wait` ms, it goes on. Resolves 'same' | 'new' | 'late'. */
+  function workerSettled(reg, wait) {
+    return new Promise(function (ok) {
+      var done = false;
+      var end = function (v) { if (done) return; done = true; clearTimeout(timer); ok(v); };
+      var timer = setTimeout(function () { end('late'); }, wait);
+      var look = function () {
+        var w = reg.installing || reg.waiting;
+        if (!w) return end('same');
+        var check = function () { if (w.state === 'activated' || w.state === 'redundant') end('new'); };
+        w.addEventListener('statechange', check);
+        check();
+      };
+      Promise.resolve().then(function () { return reg.update(); }).then(look, look);
+    });
+  }
   function abs(u) { return new URL(u, location.origin).href; }
   function text(u) { return fetch(u).then(function (r) { return r.text(); }); }
 
@@ -446,7 +477,7 @@
     } },
     { id: 'doors', name: 'Child home: Stories, Games, Videos', run: function () {
       setPct(10, 'opening the child home…');
-      return frame('/h/' + CFG.hub, 7000).then(function (f) {
+      return homeFrame(2).then(function (f) {
         // What a child does: open the Games door (its list carries the game links and the child's id), then the others.
         var d = f.contentDocument;
         var door = function (name) { var a = d.querySelector('a.wq-door[href="#' + name + '"]'); if (a) a.click(); return delay(3500); };
@@ -574,7 +605,9 @@
     $('phase').textContent = 'Installing the offline worker…';
     var t0 = Date.now();
     // (how much Chrome allows this site is asked now, before anything is being saved: see roomAsk)
-    return roomAsked.then(function () { return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }); }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
+    return roomAsked.then(function () { return navigator.serviceWorker.register('/__cb/sw.js', { scope: '/' }); }).then(function (reg) {
+      return workerSettled(reg, 30000).then(function (how) { if (how !== 'same') log(how === 'new' ? 'a newer version of the offline worker was waiting: it is in charge now' : 'a newer version of the offline worker is still coming in; carrying on'); });
+    }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
       protect().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : p === false ? 'not yet (see "Keep what is saved" on this page: install Jugnu or bookmark this page)' : 'this browser does not say')); }, function () {});
       return waitOnline().then(function () { return fetch('/__cb/manifest', { cache: 'no-store' }); }).then(function (r) { return r.json(); });
