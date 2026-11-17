@@ -210,3 +210,59 @@ test('online, a result goes to the server as it is', async () => {
   assert.equal((await res.json()).score.correct, 3);
   assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
 });
+
+// ---- games lane: Read aloud on the Challenge page with no network (record now, send and score later) ----
+const READ = '/api/wq/ch/tok.sig/read?lang=en&kid=a1b2c3d4e5f60718';
+const readServe = (ct, text = 'Imran woke up early for school.') => json({ ex: 'read', ct, secs: 60, story: { text, tokens: text.split(' ') } });
+
+async function readOffline(sw) {
+  await sw.kept(READ, readServe('ct-kept'));
+  sw.net.down = true;
+  const up = await (await sw.post('/api/wq/ch/upload', { ct: 'ct-kept', type: 'audio/webm', size: 5, audio_consent: 'notice_shown' })).json();
+  const put = await sw.put(new URL(up.put_url).pathname, 'VOICE', { 'content-type': up.content_type });
+  const res = await sw.post('/api/wq/ch/result', { ct: 'ct-kept', key: up.key, ms: 21000, ended: 'done' });
+  return { up, put, res };
+}
+
+test('a reading finished with no network is kept on the device and the page is told the result will come', async () => {
+  const sw = load({ source });
+  const { up, put, res } = await readOffline(sw);
+  assert.match(up.put_url, /\/__cb\/ch-audio\/[0-9a-f-]{36}$/);
+  assert.equal(put.status, 200);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).later, true);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => [w.ex, w.state]), [['read', 'waiting']]);
+});
+
+test('back online the kept reading goes up for the SAME story: upload, then the result with the new token', async () => {
+  const seen = [];
+  const sw = load({ source, fetch: async (req, body) => {
+    const u = new URL(req.url);
+    if (req.method === 'GET') return readServe('ct-fresh');
+    if (u.pathname === '/api/wq/ch/upload') { seen.push(['upload', JSON.parse(body)]); return json({ put_url: 'https://r2.test/put/abc', content_type: 'audio/webm', key: 'child-voice/sandbox/abc.webm' }); }
+    if (u.host === 'r2.test') { seen.push(['put', body, req.headers.get('content-type')]); return new Response('', { status: 200 }); }
+    if (u.pathname === '/api/wq/ch/result') { seen.push(['result', JSON.parse(body)]); return json({ pending: true }); }
+    return json({}, 404);
+  } });
+  await readOffline(sw);
+  sw.net.down = false;
+  await sw.message({ type: 'report' });
+  await tick(40);
+  assert.deepEqual(seen.map((x) => x[0]), ['upload', 'put', 'result']);
+  assert.deepEqual(seen[0][1], { ct: 'ct-fresh', type: 'audio/webm', size: 5, audio_consent: 'notice_shown' });
+  assert.deepEqual([seen[1][1], seen[1][2]], ['VOICE', 'audio/webm']);
+  assert.deepEqual(seen[2][1], { ct: 'ct-fresh', key: 'child-voice/sandbox/abc.webm', ms: 21000, ended: 'done' });
+  assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
+});
+
+test('another story on the fresh serve: the reading is not sent as a reading of it, and the recording is dropped', async () => {
+  const seen = [];
+  const sw = load({ source, fetch: (req) => { seen.push(req.method + ' ' + new URL(req.url).pathname); return req.method === 'GET' ? readServe('ct-fresh', 'Another story altogether.') : json({}); } });
+  await readOffline(sw);
+  sw.net.down = false;
+  await sw.message({ type: 'report' });
+  await tick(40);
+  assert.deepEqual(seen.filter((x) => /upload|result/.test(x)), []);
+  assert.deepEqual((await sw.message({ type: 'games-outbox' })).map((w) => w.state), ['questions_changed']);
+  assert.equal(await sw.message({ type: 'games-audio-kept' }), 0);
+});

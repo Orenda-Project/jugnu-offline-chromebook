@@ -112,6 +112,7 @@ export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js')
     net: state, caches,
     get: (p, init = {}) => dispatch(new Request(url(p), { method: 'GET', ...init })),
     head: (p) => dispatch(new Request(url(p), { method: 'HEAD' })),
+    put: (p, body, headers = {}) => dispatch(new Request(url(p), { method: 'PUT', headers, body })),
     post: (p, body, headers = {}) => dispatch(new Request(url(p), { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) })),
     message(data) {
       return new Promise((ok) => {

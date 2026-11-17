@@ -310,8 +310,10 @@ function post(req) {
 var G_LOCAL = 'cblocal.';
 function gdb() {
   return new Promise(function (ok, no) {
-    var r = indexedDB.open('cb-games', 1);
+    var r = indexedDB.open('cb-games', 2);
     r.onupgradeneeded = function () {
+      // 'audio': a reading recorded on the Challenge page with no network {id, type, bytes}, until it has gone up
+      if (!r.result.objectStoreNames.contains('audio')) r.result.createObjectStore('audio', { keyPath: 'id' });
       // 'runs': every big-flight run this device started {sid, pageSt, body, device, local, real:{session_id, st}}
       if (!r.result.objectStoreNames.contains('runs')) r.result.createObjectStore('runs', { keyPath: 'sid' });
       // 'ch': Challenge results played with no network, waiting to be sent {id, …}
@@ -459,6 +461,9 @@ function gamesFetch(e) {
   }
   if (/^\/api\/sa-game\/s\/(session|batch|audio\/presign|audio\/register|status)$/.test(u.pathname)) { e.respondWith(gSaGame(req, u)); return true; }
   if (req.method === 'POST' && u.pathname === '/api/wq/ch/result') { e.respondWith(gChResult(req)); return true; }
+  if (req.method === 'POST' && u.pathname === '/api/wq/ch/upload') { e.respondWith(gChUpload(req)); return true; }
+  var am = /^\/__cb\/ch-audio\/([0-9a-f-]{36})$/.exec(u.pathname);
+  if (req.method === 'PUT' && am) { e.respondWith(gChAudioPut(req, am[1])); return true; }
   return false;
 }
 
@@ -544,8 +549,16 @@ function gChScore(serve, body) {
 function gChResult(req) {
   return req.clone().text().then(function (t) {
     var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) { body = {}; }
+    // a reading whose recording is on this device (ch/upload answered here): it waits with it, whatever the network says now
+    if (typeof body.key === 'string' && body.key.indexOf(G_AUDIO_KEY) === 0) {
+      return gChServeOf(body.ct).then(function (hit) {
+        if (!hit) return json({ ok: false, offline: true }, 503);
+        return gCh('readwrite', function (st) { st.add({ kind: 'read', url: hit.url, ex: hit.serve.ex || 'read', story: (hit.serve.story && hit.serve.story.text) || null, audio: body.key.slice(G_AUDIO_KEY.length), body: body, state: 'waiting', at: Date.now() }); return null; })
+          .then(function () { gChSend(); return json({ later: true, offline: true }); });
+      });
+    }
     var later = function (res) {
-      // only a tap game's result (a reading's recording is another matter), and only from a serve kept here
+      // a tap game's result, and only from a serve kept here
       if (!body.ct || (!Array.isArray(body.taps) && !Array.isArray(body.answers))) return res || json({ ok: false, offline: true }, 503);
       return gChServeOf(body.ct).then(function (hit) {
         if (!hit) return res || json({ ok: false, offline: true }, 503);
@@ -561,6 +574,72 @@ function gChResult(req) {
     }, function () { return later(null); });
   });
 }
+/* Read aloud (the Challenge's own, and the story room's): the page records, asks where to put the recording
+ * (ch/upload), PUTs it there and posts the result with its key. With no network the "where" is this device
+ * (/__cb/ch-audio/<id>, kept in cb-games), and the result waits with it; the page says the result is on its way.
+ * Back online, when the server serves the SAME story, the recording goes up to the server's own place and the result
+ * is posted for scoring; another story: nothing is sent and the recording is dropped (it is no reading of that one). */
+var G_AUDIO_KEY = 'cblocal/';
+var gAudio = function (mode, fn) { return grec('audio', mode, fn); };
+function gChUpload(req) {
+  return req.clone().text().then(function (t) {
+    var body = {}; try { body = JSON.parse(t || '{}'); } catch (e) { body = {}; }
+    var here = function (res) {
+      return gChServeOf(body.ct).then(function (hit) {
+        if (!hit) return res || json({ ok: false, offline: true }, 503);
+        var id = gUuid();
+        return gAudio('readwrite', function (st) { st.put({ id: id, ask: body, at: Date.now() }); return null; }).then(function () {
+          return json({ put_url: new URL('/__cb/ch-audio/' + id, self.location.origin).toString(), content_type: body.type || 'audio/webm', key: G_AUDIO_KEY + id, offline: true });
+        });
+      });
+    };
+    return fetch(req.clone()).then(function (res) { return res.status >= 500 || res.status === 401 ? here(res) : res; }, function () { return here(null); });
+  });
+}
+function gChAudioPut(req, id) {
+  return req.arrayBuffer().then(function (buf) {
+    return gAudio('readonly', function (st) { return st.get(id); }).then(function (row) {
+      if (!row) return json({ error: 'unknown_recording' }, 404);
+      row.bytes = buf; row.type = req.headers.get('content-type') || (row.ask && row.ask.type) || 'audio/webm';
+      return gAudio('readwrite', function (st) { st.put(row); return null; }).then(function () { return new Response('', { status: 200 }); });
+    });
+  }).then(null, function () { return json({ error: 'not_kept' }, 507); });
+}
+/** One kept reading, sent: fresh serve (the same story) -> the server's upload place -> the recording -> the result. */
+function gChSendRead(q, put) {
+  var drop = function () { return gAudio('readwrite', function (st) { st.delete(q.audio); return null; }).then(null, function () {}); };
+  var jsonPost = function (path, b) { return fetch('/api/wq/ch/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', accept: 'application/json' }, body: JSON.stringify(b) }); };
+  return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (res) {
+    if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
+    return res.clone().json().then(function (fresh) {
+      if (!fresh.ct || !fresh.story || fresh.story.text !== q.story) { q.state = 'questions_changed'; return drop().then(function () { return put(q); }); }
+      return gAudio('readonly', function (st) { return st.get(q.audio); }).then(function (row) {
+        if (!row || !row.bytes) { q.state = 'recording_missing'; return put(q); }
+        var ask = {}; for (var k in row.ask) if (Object.prototype.hasOwnProperty.call(row.ask, k)) ask[k] = row.ask[k];
+        ask.ct = fresh.ct;
+        return jsonPost('upload', ask).then(function (up) {
+          if (up.status >= 500) return false;
+          if (!up.ok) { q.state = 'refused_' + up.status; return put(q); }
+          return up.json().then(function (u) {
+            return fetch(u.put_url, { method: 'PUT', headers: { 'content-type': u.content_type || row.type }, body: row.bytes }).then(function (pr) {
+              if (!pr.ok) return false;
+              var b = {}; for (var k2 in q.body) if (Object.prototype.hasOwnProperty.call(q.body, k2)) b[k2] = q.body[k2];
+              b.ct = fresh.ct; b.key = u.key;
+              return jsonPost('result', b).then(function (out) {
+                if (out.status >= 500) return false;
+                if (!out.ok) { q.state = 'refused_' + out.status; return put(q); }
+                return drop().then(function () { return gCh('readwrite', function (st) { st.delete(q.id); return null; }); }).then(function () {
+                  fetch('/__cb/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ game_sent: { ex: 'read', recording: true, lag_s: Math.round((Date.now() - q.at) / 1000) } }) }).catch(function () {});
+                  return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (nx) { return keep(q.url, nx); }, function () { return null; });
+                });
+              });
+            });
+          });
+        });
+      });
+    });
+  }).then(null, function () { return false; });
+}
 var gChSending = null;
 function gChSend() {
   if (gChSending) return gChSending;
@@ -570,6 +649,7 @@ function gChSend() {
     return list.filter(function (q) { return q.state === 'waiting'; }).reduce(function (p, q) {
       return p.then(function (go) {
         if (go === false) return false;
+        if (q.kind === 'read') return gChSendRead(q, put);
         return fetch(q.url, { cache: 'no-store', headers: { accept: 'application/json' } }).then(function (res) {
           if (!res.ok) return res.status >= 500 ? false : (q.state = 'refused_' + res.status, put(q));
           return res.clone().json().then(function (fresh) {
@@ -596,6 +676,7 @@ self.addEventListener('message', function (e) {
   var d = e.data || {};
   var port = e.ports && e.ports[0];
   if (d.type === 'report') { e.waitUntil(gChSend()); return; }
+  if (d.type === 'games-audio-kept' && port) { e.waitUntil(gAudio('readonly', function (st) { return st.getAll(); }).then(function (l) { port.postMessage((l || []).length); }, function () { port.postMessage(0); })); return; }
   if (d.type === 'games-outbox' && port) {
     e.waitUntil(Promise.all([gChWaiting(), gRuns()]).then(function (v) {
       port.postMessage(v[0].map(function (q) { return { ex: q.ex, state: q.state, answers: (q.body.taps || q.body.answers || []).length, at: q.at }; })
