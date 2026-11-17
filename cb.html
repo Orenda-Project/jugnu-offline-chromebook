@@ -118,6 +118,26 @@
     });
   }
   function abs(u) { return new URL(u, location.origin).href; }
+  /* This Chromebook's child home. The server signs each Chromebook its own link (it needs this Chromebook's key) and
+   * the offline worker keeps it fresh from then on; a link given by a test rig (?hub=) or, on a server that cannot
+   * sign, the configured one is used as it is. */
+  function home(m, own) {
+    var device = (function () { try { var d = localStorage.getItem('cb-device'); if (!d) { d = 'd' + Math.random().toString(36).slice(2, 12); localStorage.setItem('cb-device', d); } return d; } catch (e) { return ''; } }());
+    var sw = navigator.serviceWorker.controller;
+    var use = function (hub, how) {
+      m.hub = hub;
+      try { localStorage.setItem('cb-hub', hub); } catch (e) {}
+      log('child home: ' + how);
+      return m;
+    };
+    if (own) { sw.postMessage({ type: 'hub', hub: own, key: KEY, device: device }); return use(own, 'the test link given'); }
+    if (m.hub) sw.postMessage({ type: 'hub', hub: m.hub, key: KEY, device: device });
+    if (!m.signing || !KEY) return use(m.hub, m.signing ? 'the configured link (this Chromebook has no key yet)' : 'the configured link (this server cannot sign a fresh one)');
+    return ask({ type: 'home', key: KEY, device: device, fresh: true }, 8000).then(function (h) {
+      if (h && h.hub && h.live) return use(h.hub, 'a fresh link for this Chromebook, good for ' + Math.round(h.left / 86400) + ' days and renewed whenever it is online');
+      return use((h && h.hub) || m.hub, 'no fresh link could be had now; the last one is used');
+    });
+  }
 
   function run() {
     $('ready').disabled = true;
@@ -136,9 +156,8 @@
       loadReady = Promise.all((m.ready || []).map(function (f) {
         return new Promise(function (ok) { var s = document.createElement('script'); s.src = '/__cb/ready/' + f; s.onload = s.onerror = ok; document.head.appendChild(s); });
       }));
-      // This Chromebook's child home, for Home buttons that must work offline (worker + every quiz page).
-      try { localStorage.setItem('cb-hub', m.hub); } catch (e) {}
-      if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'hub', hub: m.hub });
+      return home(m, own);
+    }).then(function (m) {
       setPct(10, 'Saving Jugnu and its voices (' + m.static.length + ' files)…');
       return warm(m.static.map(abs).concat([location.href]));
     }).then(function (r) {
@@ -217,7 +236,7 @@
       setPct(100, 'Ready. Everything below now works on this Chromebook without Wi-Fi.');
       $('step2').classList.remove('hidden');
       showChild();
-      var links = [['Child home', 'Stories, games, videos', '/h/' + CFG.hub]].concat(CFG.quizzes.map(function (q, i) { return ['Quiz: ' + CFG.quizNames[i], 'Class quiz ' + q, '/q/' + q]; }));
+      var links = [['Child home', 'Stories, games, videos', '/cb/home']].concat(CFG.quizzes.map(function (q, i) { return ['Quiz: ' + CFG.quizNames[i], 'Class quiz ' + q, '/q/' + q]; }));
       games.forEach(function (g) { links.push([/sa-game/.test(g) ? 'Reading game' : 'Number game', /sa-game/.test(g) ? "Jugnu's big flight" : 'Numbers with Jugnu', g]); });
       $('links').innerHTML = links.map(function (l) { return '<a href="' + l[2] + '">' + l[0] + '<small>' + l[1] + '</small></a>'; }).join('');
       localStorage.setItem('cb-links', $('links').innerHTML);
