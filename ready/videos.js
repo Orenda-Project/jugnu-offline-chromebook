@@ -15,6 +15,7 @@
   'use strict';
   var LANGS = ['en', 'ur'];
   var RESERVE = 300e6; // left free on the drive whatever happens
+  var CLIPS = 1.3e6;   // a lesson's ~90 quiz voice clips and its page: 1.05 MB a lesson measured on Class 2, with a margin
   var MEDIA = /https?:\/\/[^"'\s\\<>]+?\.(mp4|webm|m4v|mov|mp3|m4a|ogg|opus|wav|webp|png|jpe?g)(?:\?[^"'\s\\<>]*)?/g;
   var lsJson = function (k, d) { try { var v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; } catch (e) { return d; } };
   var mb = function (n) { return n >= 1000 ? (n / 1000).toFixed(1) + ' GB' : Math.round(n) + ' MB'; };
@@ -47,17 +48,34 @@
     return out;
   }
 
+  /** Run fn over the items, n at a time. */
+  function pool(items, n, fn) {
+    var at = 0;
+    var lane = async function () { while (at < items.length) { var i = at; at += 1; await fn(items[i], i); } };
+    var lanes = [];
+    for (var k = 0; k < n; k += 1) lanes.push(lane());
+    return Promise.all(lanes);
+  }
+
   async function run(ctx) {
     var json = function (u) { return fetch(u).then(function (r) { if (!r.ok) throw new Error('the list did not load (' + r.status + ')'); return r.json(); }); };
+    var sum = function (xs, f) { return xs.reduce(function (a, x) { return a + (f(x) || 0); }, 0); };
     if (!ctx.kid) throw new Error('no child id: the child home did not open');
     var top = await json(libUrl(ctx.hub, ctx.kid, 'en', null));
     var own = String(top.grade);
     var grades = (top.grades || []).map(function (x) { return String(x.g); });
     ctx.note('cb-home-grade', own);
     if (!lsJson('cb-video-all', []).length) ctx.note('cb-video-all', grades); // no class list on this Chromebook: every grade can be ticked
+    // Every class's lesson count, for the ticks on the start page. Its size is written only once it has been
+    // MEASURED (below): Jugnu's lists carry a size just for lessons it happened to look at lately, so a class can
+    // come with none at all, and a size that is not there must never be shown, or counted, as 0.
+    var sizes = lsJson('cb-video-sizes', {}), summary = lsJson('cb-videos', {}), problems = [];
+    (top.grades || []).forEach(function (x) { var g = String(x.g), had = sizes[g]; sizes[g] = had && had.measured ? { n: x.n, mb: had.mb, measured: true } : { n: x.n }; });
+    ctx.note('cb-video-sizes', sizes);
     var want = ctx.videoGrades().map(String).filter(function (g) { return grades.indexOf(g) >= 0; });
     if (!want.length) return 'no class ticked';
-    var sizes = lsJson('cb-video-sizes', {}), summary = lsJson('cb-videos', {}), problems = [];
+    var quiet = { each: function () {} };
+    var page = function (v) { return fetch(pageUrl(v)).then(function (r) { return r.ok ? r.text() : ''; }, function () { return ''; }); };
 
     for (var gi = 0; gi < want.length; gi += 1) {
       var g = want[gi];
@@ -67,9 +85,6 @@
       var subjects = ((await json(libUrl(ctx.hub, ctx.kid, 'en', g))).subjects || []).map(function (s) { return s.key; });
       var lessons = [];
       for (var si = 0; si < subjects.length; si += 1) lessons = lessons.concat(lessonsOf(await json(libUrl(ctx.hub, ctx.kid, 'en', g, subjects[si])), subjects[si]));
-      var total = lessons.reduce(function (a, v) { return a + v.mb; }, 0);
-      sizes[g] = { n: lessons.length, mb: Math.round(total) };
-      ctx.note('cb-video-sizes', sizes);
       // 2. a page for each lesson that has none yet (a child's first tap makes it; here it is made ahead)
       var bare = lessons.filter(function (v) { return !v.code; });
       for (var bi = 0; bi < bare.length; bi += 1) {
@@ -84,74 +99,102 @@
       });
       var pics = [];
       lessons.forEach(function (v) { [v.thumb, v.poster, v.art].forEach(function (u) { if (u && pics.indexOf(u) < 0) pics.push(u); }); });
-      var quiet = { each: function () {} };
-      var r0 = await ctx.warm(lists.map(ctx.abs), { fresh: true, each: quiet.each });
-      var rp = await ctx.warm(pics.map(ctx.abs), { readable: true, each: quiet.each });
-      // 4. what is already here, checked against the drive (not only this step's own record): a saved lesson whose
-      //    page, video or a clip has gone from the drive is saved again
-      var have = lsJson('cb-videos-' + g, []);
-      for (var hi = 0; hi < lessons.length; hi += 1) {
-        var hv = lessons[hi], at = have.indexOf(hv.vid);
-        if (at < 0) continue;
-        var whole = false;
-        if (hv.code && hv.k) {
-          var keptPage = await ctx.ask({ type: 'kept-text', url: ctx.abs(pageUrl(hv)) }, 15000);
-          var km = keptPage ? mediaOf(keptPage) : null;
-          if (km && km.video.length) {
-            var there = await ctx.ask({ type: 'have', urls: km.video.concat(km.clips) }, 30000);
-            whole = Array.isArray(there) && there.every(Boolean);
-          }
-        }
-        if (!whole) have.splice(at, 1);
-      }
+      await ctx.warm(lists.map(ctx.abs), { fresh: true, each: quiet.each });
+      await ctx.warm(pics.map(ctx.abs), { readable: true, each: quiet.each });
+      // 4. MEASURE, lesson by lesson (six at a time): its page, the video it names, and that video's real length: the
+      //    file on the drive when it is kept, else its length on the server, asked for with one byte (the worker's
+      //    `size`). A lesson this step saved before is checked against the drive here too: if its page, its video or
+      //    a clip has gone, it is saved again.
+      var have = lsJson('cb-videos-' + g, []), measured = 0;
+      await pool(lessons, 6, async function (v) {
+        var at = have.indexOf(v.vid), was = at >= 0;
+        v.bytes = null; v.onDrive = false; v.clipBytes = 0; v.m = null;
+        if (v.code && v.k) {
+          var html = was ? await ctx.ask({ type: 'kept-text', url: ctx.abs(pageUrl(v)) }, 15000) : null;
+          if (!html) { html = await page(v); if (!html) { await ctx.waitOnline(); html = await page(v); } }
+          var m = html ? mediaOf(html) : null;
+          if (m && m.video.length) {
+            v.m = m;
+            var sz = await ctx.ask({ type: 'size', urls: m.video.slice(0, 1).concat(was ? m.clips : []) }, 90000);
+            if (Array.isArray(sz) && sz[0]) { v.bytes = sz[0].bytes; v.onDrive = !!sz[0].kept; }
+            if (was && Array.isArray(sz) && sz.every(function (x) { return x && x.kept; })) v.clipBytes = sum(sz.slice(1), function (x) { return x.bytes; });
+            else if (was) was = false;
+          } else was = false;
+        } else was = false;
+        if (!was && at >= 0) have.splice(have.indexOf(v.vid), 1);
+        measured += 1;
+        if (measured % 6 === 0 || measured === lessons.length) ctx.setPct(null, label + ': measuring lessons, ' + measured + ' of ' + lessons.length);
+      });
       localStorage.setItem('cb-videos-' + g, JSON.stringify(have));
-      // room for the whole class?
+      // A length that could not be read (the server did not answer): the list's own size if it has one, else the
+      // average of the lessons that were read. Said plainly, never passed off as measured.
+      var known = lessons.filter(function (v) { return v.bytes != null; });
+      var unread = lessons.length - known.length;
+      var avg = known.length ? sum(known, function (v) { return v.bytes; }) / known.length : 12e6;
+      lessons.forEach(function (v) { if (v.bytes == null) v.bytes = v.mb ? v.mb * 1e6 : avg; });
+      var total = sum(lessons, function (v) { return v.bytes; });
+      sizes[g] = unread ? { n: lessons.length, mb: Math.round(total / 1e6) } : { n: lessons.length, mb: Math.round(total / 1e6), measured: true };
+      ctx.note('cb-video-sizes', sizes);
+      if (unread) ctx.log('lesson videos, ' + label + ': the length of ' + unread + ' of ' + lessons.length + ' videos could not be read; their size is an estimate');
+      var keptOf = function () { return { video: sum(lessons, function (v) { return have.indexOf(v.vid) >= 0 ? v.bytes : 0; }), clips: sum(lessons, function (v) { return have.indexOf(v.vid) >= 0 ? v.clipBytes : 0; }) }; };
+      var record = function (why) {
+        var k = keptOf();
+        summary[g] = { n: lessons.length, saved: have.length, mb: Math.round(k.video / 1e6), clips_mb: Math.round(k.clips / 1e6), of_mb: Math.round(total / 1e6) };
+        if (why) summary[g].why = why;
+      };
+      // 5. room for the whole class? What is still to fetch: each video not on the drive at its real length, about
+      //    1.3 MB a lesson for its quiz voices and page (measured: 1.05 MB), and a reserve that is never used.
       var left = lessons.filter(function (v) { return have.indexOf(v.vid) < 0; });
-      var need = left.reduce(function (a, v) { return a + v.mb; }, 0) * 1e6 * 1.08 + RESERVE; // the quiz clips and pages add a few percent
+      var need = sum(left, function (v) { return v.onDrive ? 0 : v.bytes; }) + CLIPS * left.length + RESERVE;
       var sp = await ctx.space();
       if (left.length && sp.free != null && need > sp.free) {
         problems.push(label + ' needs ' + mb(need / 1e6) + ', this Chromebook has room for ' + mb(sp.free / 1e6));
-        summary[g] = { n: lessons.length, saved: have.length, mb: Math.round(total), why: 'no room' };
-        ctx.note('cb-videos', summary);
+        record('no room'); ctx.note('cb-videos', summary);
+        ctx.log('lesson videos, ' + label + ': not saved: it needs ' + mb(need / 1e6) + ' (' + left.length + ' lessons, ' + mb(sum(left, function (v) { return v.bytes; }) / 1e6) + ' of video) and this Chromebook has room for ' + mb(sp.free / 1e6));
         continue;
       }
-      // 5. lesson by lesson (three at a time): its page, its video, its pictures, its quiz clips
-      var doneMb = lessons.reduce(function (a, v) { return a + (have.indexOf(v.vid) >= 0 ? v.mb : 0); }, 0);
-      var next = 0, stopped = false;
-      var page = function (v) { return fetch(pageUrl(v)).then(function (r) { return r.ok ? r.text() : ''; }, function () { return ''; }); };
-      var one = async function (v) {
-        if (!v.code || !v.k) return false;
-        var html = await page(v);
-        if (!html) { await ctx.waitOnline(); html = await page(v); } // the Wi-Fi dropped: wait for it, then once more
-        var m = mediaOf(html);
-        if (!html || !m.video.length) return false;
+      // 6. lesson by lesson (three at a time): its page, its video, its pictures, its quiz clips
+      var stopped = false;
+      var saveOne = async function (v, m) {
         var r1 = await ctx.warm([ctx.abs(pageUrl(v))].concat(m.pics), { readable: true, each: quiet.each });
         // the video and its ~90 small quiz clips side by side (the clips are many and tiny: six at a time)
         var both = await Promise.all([ctx.warm(m.video, { readable: true, lanes: 1, each: quiet.each }), ctx.warm(m.clips, { readable: true, lanes: 6, batch: 30, each: quiet.each })]);
         return !r1.failed.length && !both[0].failed.length && !both[0].gone.length && !both[1].failed.length;
       };
-      var lane = async function () {
-        while (next < lessons.length && !stopped) {
-          var v = lessons[next]; next += 1;
-          if (have.indexOf(v.vid) >= 0) continue;
-          var ok = await one(v);
-          if (ctx.isFull()) { stopped = true; break; }
-          if (ok) {
-            have.push(v.vid); doneMb += v.mb;
-            localStorage.setItem('cb-videos-' + g, JSON.stringify(have));
-            summary[g] = { n: lessons.length, saved: have.length, mb: Math.round(total) };
-            if (have.length % 5 === 0) ctx.note('cb-videos', summary);
-          }
-          ctx.setPct(100 * (gi + (total ? doneMb / total : have.length / lessons.length)) / want.length, label + ': ' + have.length + ' of ' + lessons.length + ' lessons (' + mb(doneMb) + ' of ' + mb(total) + ')');
+      var one = async function (v) {
+        if (!v.code || !v.k || !v.m) return false;
+        var ok = await saveOne(v, v.m);
+        if (!ok && !ctx.isFull()) {
+          // its links may have run out since they were read (they last 6 hours): the page again, fresh links, once
+          await ctx.waitOnline();
+          var html = await page(v), m = html ? mediaOf(html) : null;
+          if (m && m.video.length) { v.m = m; ok = await saveOne(v, m); }
         }
+        if (!ok) return false;
+        // what is now on the drive, read back from the drive
+        var sz = await ctx.ask({ type: 'size', urls: v.m.video.slice(0, 1).concat(v.m.clips) }, 90000);
+        if (!Array.isArray(sz) || !sz[0] || !sz[0].kept) return false;
+        v.bytes = sz[0].bytes; v.clipBytes = sum(sz.slice(1), function (x) { return x && x.kept ? x.bytes : 0; });
+        return true;
       };
-      ctx.setPct(100 * gi / want.length, label + ': ' + have.length + ' of ' + lessons.length + ' lessons (' + mb(doneMb) + ' of ' + mb(total) + ')');
-      await Promise.all([lane(), lane(), lane()]);
+      var said = function () { var k = keptOf(); ctx.setPct(100 * (gi + (total ? k.video / total : have.length / Math.max(1, lessons.length))) / want.length, label + ': ' + have.length + ' of ' + lessons.length + ' lessons (' + mb(k.video / 1e6) + ' of ' + mb(total / 1e6) + ')'); };
+      said();
+      await pool(left, 3, async function (v) {
+        if (stopped) return;
+        var ok = await one(v);
+        if (ctx.isFull()) { stopped = true; return; }
+        if (ok) {
+          have.push(v.vid);
+          localStorage.setItem('cb-videos-' + g, JSON.stringify(have));
+          record();
+          if (have.length % 5 === 0) ctx.note('cb-videos', summary);
+        }
+        said();
+      });
       if (ctx.isFull()) problems.push(label + ': the drive filled up after ' + have.length + ' lessons');
-      summary[g] = { n: lessons.length, saved: have.length, mb: Math.round(total) };
-      ctx.note('cb-videos', summary);
+      record(); ctx.note('cb-videos', summary);
       if (have.length < lessons.length && !ctx.isFull()) problems.push(label + ': ' + (lessons.length - have.length) + ' of ' + lessons.length + ' lessons not saved yet');
-      ctx.log('lesson videos, ' + label + ': ' + have.length + ' of ' + lessons.length + ' lessons on this Chromebook (' + mb(total) + ')');
+      ctx.log('lesson videos, ' + label + ': ' + have.length + ' of ' + lessons.length + ' lessons on this Chromebook (' + mb(summary[g].mb) + ' of video, ' + mb(summary[g].clips_mb) + ' of quiz voices)');
     }
     if (problems.length) throw new Error(problems.join('; '));
     return want.map(function (g) { return 'Class ' + g + ': ' + summary[g].saved + ' lessons, ' + mb(summary[g].mb); }).join('; ');

@@ -569,6 +569,30 @@ function videoSave(url, fresh) {
     });
   }).catch(function (e) { return { ok: false, why: e && e.name === 'QuotaExceededError' ? 'no_room' : 'failed' }; });
 }
+/** How big a media file is: its real length on the drive when it is kept, else its length on the server, asked for
+ * with a one-byte range through this site (the total rides in Content-Range; nothing is downloaded). {bytes, kept};
+ * bytes null when neither could be read. Jugnu's lists carry a size only for lessons it looked at lately, so the
+ * videos step measures here before it decides whether a class fits, and reports what was really kept. */
+function videoSize(url) {
+  var key;
+  try { key = videoKeyOf(url); } catch (e) { return Promise.resolve({ bytes: null, kept: false }); }
+  var none = { bytes: null, kept: false };
+  return caches.open(KEEP).then(function (c) { return c.match(key); }).then(function (hit) {
+    if (hit && hit.type !== 'opaque') return hit.blob().then(function (b) { return { bytes: b.size, kept: true }; });
+    if (savedOnly()) return none;
+    return homeState().then(function (st) {
+      return fetch('/__cb/media?u=' + encodeURIComponent(url), { headers: { 'X-CB-Key': st.key || '', Range: 'bytes=0-0' } }).then(function (res) {
+        var total = null;
+        if (res.headers.get('X-CB-Media') === '1' && (res.status === 206 || res.status === 200)) {
+          var m = /\/(\d+)\s*$/.exec(res.headers.get('Content-Range') || '');
+          total = m ? Number(m[1]) : res.status === 200 ? Number(res.headers.get('Content-Length')) || null : null;
+        }
+        if (res.body && res.body.cancel) res.body.cancel().catch(function () {}); // the byte itself is not wanted
+        return { bytes: total, kept: false };
+      });
+    });
+  }).catch(function () { return none; });
+}
 /* ==== end VIDEOS ================================================================================================ */
 
 /* ==== READY (lane/home, bd-fc5mgd.13.3): what Get ready meant to save, and a self-test that reaches no network ====
@@ -645,6 +669,15 @@ function readyMessage(d, port, e) {
   if (d.type === 'audit') { e.waitUntil(audit().then(reply, function () { reply(null); })); return true; }
   if (d.type === 'have' && Array.isArray(d.urls)) {
     e.waitUntil(caches.open(KEEP).then(function (c) { return Promise.all(d.urls.map(function (u) { return has(c, u).catch(function () { return false; }); })); }).then(reply, function () { reply(null); }));
+    return true;
+  }
+  // how big each media file is, on the drive or on the server (videoSize); eight at a time
+  if (d.type === 'size' && Array.isArray(d.urls)) {
+    var sizes = new Array(d.urls.length), at = 0;
+    var sizeNext = function () { var i = at; at += 1; return i >= d.urls.length ? Promise.resolve() : videoSize(d.urls[i]).then(function (r) { sizes[i] = r; return sizeNext(); }); };
+    var sizeLanes = [];
+    for (var sl = 0; sl < 8; sl += 1) sizeLanes.push(sizeNext());
+    e.waitUntil(Promise.all(sizeLanes).then(function () { reply(sizes); }, function () { reply(null); }));
     return true;
   }
   // the saved copy of a page or list as text, with no network asked (null when it is not on the drive)

@@ -45,6 +45,12 @@ playing?, or null); `note(key, value)` (kept on the device for the start page); 
 
 `setPct(pct, text)`: `pct` is your step's own progress 0–100 (pass `null` to change only the text).
 
+`ask({ type: 'size', urls })` → `[{ bytes, kept }]`: how big each media file really is. `kept: true` is its length on
+the drive; otherwise its length on the server, read with a one-byte request through this site (nothing is
+downloaded); `bytes: null` when neither could be read. Use it before a large download to see whether it fits, and
+after it to report what was kept. Do not plan room from a size in one of Jugnu's lists: those are there only for
+files Jugnu looked at lately (a whole class of lesson videos came with none).
+
 ## A step can also say
 
 - `late: true` — runs after the start page has said "Ready" (a long, optional download, like the lesson videos).
