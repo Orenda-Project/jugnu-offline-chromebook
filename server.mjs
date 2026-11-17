@@ -19,7 +19,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { upstreamHeaders, rewrittenHeaders } from './proxy-fresh.mjs';
+import { upstreamHeaders, rewrittenHeaders, notModified } from './proxy-fresh.mjs';
 import { fileURLToPath } from 'node:url';
 import { speechRoute } from './speech/serve.mjs';
 
@@ -256,8 +256,10 @@ const server = http.createServer((req, res) => {
   }
 
   const ownOrigin = ownOriginOf(req);
-  // games lane (proxy-fresh.mjs): nothing this server rewrites is asked of Jugnu "only if changed"
-  const headers = upstreamHeaders(req.method, url.pathname, { ...req.headers, host: UPSTREAM.host, 'accept-encoding': 'gzip, br, deflate' });
+  // games lane (proxy-fresh.mjs): "only if changed" goes to Jugnu only with a validator this release handed out
+  const stamp = release().stamp;
+  const fresh = upstreamHeaders(req.method, url.pathname, { ...req.headers, host: UPSTREAM.host, 'accept-encoding': 'gzip, br, deflate' }, stamp);
+  const headers = fresh.headers;
   delete headers['x-forwarded-host'];
   delete headers['x-forwarded-proto'];
   if (headers.origin) headers.origin = UPSTREAM.origin;
@@ -273,7 +275,8 @@ const server = http.createServer((req, res) => {
       const type = String(out['content-type'] || '');
 
       if (!TEXT_RX.test(type)) {
-        res.writeHead(upRes.statusCode, out);
+        // Jugnu's "not changed" to a validator of this release: it goes back as this release's (proxy-fresh.mjs)
+        res.writeHead(upRes.statusCode, upRes.statusCode === 304 && fresh.ours ? notModified(out, stamp) : out);
         upRes.pipe(res);
         upRes.on('end', () => log({ m: req.method, p: req.url, s: upRes.statusCode, type, ua, ms: Date.now() - started }));
         return;
@@ -294,7 +297,7 @@ const server = http.createServer((req, res) => {
         delete out['transfer-encoding'];
         out['content-length'] = body.length;
         // games lane (proxy-fresh.mjs): this body is no longer Jugnu's, so Jugnu's validators do not go with it
-        res.writeHead(upRes.statusCode, rewrittenHeaders(out));
+        res.writeHead(upRes.statusCode, rewrittenHeaders(out, stamp));
         res.end(body);
         log({ m: req.method, p: req.url, s: upRes.statusCode, type, bytes: body.length, ua, ms: Date.now() - started });
       });
