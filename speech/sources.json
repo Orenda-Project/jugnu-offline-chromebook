@@ -1,0 +1,29 @@
+{
+  "_": "Every file the on-device scorer loads, and the fixed place each one comes from (a version or a commit, never 'latest'). The pilot server fetches each one once, keeps it (speech/fetched/), and serves it from its own address so that Get ready can save it on the Chromebook.",
+  "lib/transformers.min.js": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js",
+  "lib/ort-wasm-simd-threaded.asyncify.mjs": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.0-dev.20260914-8d85527a0/dist/ort-wasm-simd-threaded.asyncify.mjs",
+  "lib/ort-wasm-simd-threaded.asyncify.wasm": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.0-dev.20260914-8d85527a0/dist/ort-wasm-simd-threaded.asyncify.wasm",
+  "lib/ort.wasm.min.mjs": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort.wasm.min.mjs",
+  "lib/ort-wasm-simd-threaded.mjs": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.mjs",
+  "lib/ort-wasm-simd-threaded.wasm": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/ort-wasm-simd-threaded.wasm",
+
+  "models/onnx-community/moonshine-base-ONNX/config.json": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/config.json",
+  "models/onnx-community/moonshine-base-ONNX/generation_config.json": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/generation_config.json",
+  "models/onnx-community/moonshine-base-ONNX/preprocessor_config.json": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/preprocessor_config.json",
+  "models/onnx-community/moonshine-base-ONNX/tokenizer.json": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/tokenizer.json",
+  "models/onnx-community/moonshine-base-ONNX/tokenizer_config.json": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/tokenizer_config.json",
+  "models/onnx-community/moonshine-base-ONNX/onnx/encoder_model_quantized.onnx": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/encoder_model_quantized.onnx",
+  "models/onnx-community/moonshine-base-ONNX/onnx/decoder_model_merged_quantized.onnx": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/b1e9b6aae3c3c7298f10c3798393fdf38e8fbbad/onnx/decoder_model_merged_quantized.onnx",
+
+  "models/onnx-community/moonshine-tiny-ONNX/config.json": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/a6da1241cd305dcd64eab1edbd615f2bb9aabb95/config.json",
+  "models/onnx-community/moonshine-tiny-ONNX/generation_config.json": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/a6da1241cd305dcd64eab1edbd615f2bb9aabb95/generation_config.json",
+  "models/onnx-community/moonshine-tiny-ONNX/preprocessor_config.json": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/a6da1241cd305dcd64eab1edbd615f2bb9aabb95/preprocessor_config.json",
+  "models/onnx-community/moonshine-tiny-ONNX/tokenizer.json": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/a6da1241cd305dcd64eab1edbd615f2bb9aabb95/tokenizer.json",
+  "models/onnx-community/moonshine-tiny-ONNX/tokenizer_config.json": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/a6da1241cd305dcd64eab1edbd615f2bb9aabb95/tokenizer_config.json",
+  "models/onnx-community/moonshine-tiny-ONNX/onnx/encoder_model_quantized.onnx": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/a6da1241cd305dcd64eab1edbd615f2bb9aabb95/onnx/encoder_model_quantized.onnx",
+  "models/onnx-community/moonshine-tiny-ONNX/onnx/decoder_model_merged_quantized.onnx": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/a6da1241cd305dcd64eab1edbd615f2bb9aabb95/onnx/decoder_model_merged_quantized.onnx",
+
+  "models/dolphin/base/model.int8.onnx": "https://huggingface.co/csukuangfj/sherpa-onnx-dolphin-base-ctc-multi-lang-int8-2025-04-02/resolve/1f3a53d0ecf658f8b0974e2cfde368eee40732fa/model.int8.onnx",
+  "models/dolphin/base/tokens.txt": "https://huggingface.co/csukuangfj/sherpa-onnx-dolphin-base-ctc-multi-lang-int8-2025-04-02/resolve/1f3a53d0ecf658f8b0974e2cfde368eee40732fa/tokens.txt",
+  "models/dolphin/base/meta.json": "file:dolphin-base.meta.json"
+}

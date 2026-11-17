@@ -19,6 +19,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { speechRoute } from './speech/serve.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const arg = (name, dflt) => {
@@ -122,6 +123,8 @@ const server = http.createServer((req, res) => {
     log({ m: req.method, p: req.url, s: 302, ua });
     return;
   }
+  // The on-device read-aloud scorer and the model files it loads (speech/serve.mjs).
+  if (speechRoute(req, res, url)) { log({ m: req.method, p: req.url, s: 200, local: true, ua }); return; }
   // Get-ready steps, one file per area (ready/<name>.js); cb.html loads each and runs them after its own steps.
   const rm = /^\/__cb\/ready\/([a-z0-9-]+\.js)$/.exec(url.pathname);
   if (rm && readyList().includes(rm[1])) {
