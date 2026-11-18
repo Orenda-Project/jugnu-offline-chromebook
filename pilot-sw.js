@@ -1233,7 +1233,8 @@ self.addEventListener('message', function (e) {
   var abs = function (u) { try { return new URL(u, self.location.origin).toString(); } catch (x) { return null; } };
   var urls = (d.urls || []).filter(function (u) { return typeof u === 'string'; }).map(abs).filter(Boolean);
   if (d.type === 'check') {
-    e.waitUntil(Promise.all(urls.map(function (u) { return kept(u).then(function (hit) { return hit ? null : u; }, function () { return u; }); })).then(function (r) {
+    // The same lookup playback uses: a media-store file is kept in MEDIA_KEEP under its unsigned address.
+    e.waitUntil(Promise.all(urls.map(function (u) { return videoKept(u, u).then(function (hit) { return hit ? null : u; }, function () { return u; }); })).then(function (r) {
       var missing = r.filter(Boolean);
       port.postMessage({ ok: missing.length === 0, cached: urls.length - missing.length, missing: missing });
     }));

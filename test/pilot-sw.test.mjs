@@ -810,3 +810,13 @@ test('the server judged another answer than the one sent (the run had its answer
   assert.ok(srv.answered.every((x) => x[0] !== kept));
   assert.deepEqual(await sw.message({ type: 'games-outbox' }), []);
 });
+
+test('check finds a media-store clip kept in the media cache under its unsigned address (as playback does)', async () => {
+  const sw = load({ source, fetch: () => audio() });
+  const SIGNED = 'https://acct.r2.cloudflarestorage.com/bucket/ch/en/clip-7.mp3?X-Amz-Signature=abc&X-Amz-Expires=21600';
+  const m = await sw.caches.open('cb-media-v1');
+  await m.put('https://acct.r2.cloudflarestorage.com/bucket/ch/en/clip-7.mp3', audio());
+  const out = await sw.message({ type: 'check', urls: [SIGNED] });
+  assert.deepEqual({ ok: out.ok, cached: out.cached, missing: out.missing }, { ok: true, cached: 1, missing: [] });
+  assert.equal(sw.net.calls.length, 0);
+});
