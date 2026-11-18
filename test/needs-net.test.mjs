@@ -76,8 +76,8 @@ test('a lesson quiz started with no network greets the child who was picked, not
   assert.match(body.st, /^cblocal\./);
   assert.equal(body.child.first, 'Sana');
   // a name the child typed still wins
-  const typed = await (await sw.post('/api/wq/session', { code: 'ABCDEF', device_ref: 'dddddddddddddddddddddd', new: { name: 'Bilal' } })).json();
-  assert.equal(typed.child.first, 'Bilal');
+  const typed = await (await sw.post('/api/wq/session', { code: 'ABCDEF', device_ref: 'dddddddddddddddddddddd', new: { name: 'Testkid' } })).json();
+  assert.equal(typed.child.first, 'Testkid');
 });
 
 /* ---- boot.js: which of Jugnu's own "this did not open" screens get the plain words when there is no network ---- */
