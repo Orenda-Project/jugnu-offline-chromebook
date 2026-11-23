@@ -3,6 +3,7 @@
 //   const sw = load({ fetch: async (req) => new Response(…), source?: '<path to another copy of the worker>' })
 //   await sw.get('/path')  await sw.post('/api/…', body)  await sw.head('/path')  await sw.message({ type, … })
 //   sw.kept('/path', response)   put a copy in the worker's cache        sw.net.down = true   every fetch fails
+//   await sw.getFrom('<page url>', '/path')   a request made by that page (its clientId); sw.posted: what the worker told pages
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -82,6 +83,7 @@ function fakeCaches() {
 export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js'), timers = null } = {}) {
   const listeners = {};
   const state = { down: false, calls: [] };
+  const posted = []; // messages the worker sent to a page: {to: <page url>, data}
   const caches = fakeCaches();
   const fetchImpl = async (input, init) => {
     const req = input instanceof Request ? input : new Request(typeof input === 'string' && input.startsWith('/') ? ORIGIN + input : input, init);
@@ -94,7 +96,9 @@ export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js')
   const g = {
     location: new URL(ORIGIN + '/__cb/sw.js'),
     addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); },
-    skipWaiting: () => Promise.resolve(), clients: { claim: () => Promise.resolve(), matchAll: () => Promise.resolve([]) },
+    skipWaiting: () => Promise.resolve(), clients: { claim: () => Promise.resolve(), matchAll: () => Promise.resolve([]),
+      // a page is known by its address here: the clientId a test gives IS the page's url
+      get: (id) => Promise.resolve(id ? { url: id.startsWith('http') ? id : ORIGIN + id, postMessage: (data) => posted.push({ to: id, data: JSON.parse(JSON.stringify(data)) }) } : undefined) },
     registration: { scope: ORIGIN + '/' },
     caches, fetch: fetchImpl, indexedDB: fakeIndexedDB(), Response, Request, Headers, URL, URLSearchParams, crypto: globalThis.crypto, atob, btoa, Blob,
     setTimeout: timers ? timers.set : setTimeout, clearTimeout: timers ? timers.clear : clearTimeout, setInterval, clearInterval, console, Promise, JSON, Date, Math, Object, Array, String, Number, Uint8Array, encodeURIComponent, decodeURIComponent, structuredClone, TextEncoder, TextDecoder,
@@ -103,16 +107,17 @@ export function load({ fetch: net, source = path.join(HERE, '..', 'pilot-sw.js')
   const ctx = vm.createContext(g);
   vm.runInContext(fs.readFileSync(source, 'utf8'), ctx, { filename: 'pilot-sw.js' });
 
-  const dispatch = (req) => {
+  const dispatch = (req, clientId = '') => {
     let answer = null;
     const waits = [];
-    for (const fn of listeners.fetch || []) { fn({ request: req, respondWith(p) { if (!answer) answer = Promise.resolve(p); }, waitUntil(p) { waits.push(p); } }); if (answer) break; }
+    for (const fn of listeners.fetch || []) { fn({ request: req, clientId, respondWith(p) { if (!answer) answer = Promise.resolve(p); }, waitUntil(p) { waits.push(p); } }); if (answer) break; }
     return answer; // null = the worker left it to the network
   };
   const url = (p) => (p.startsWith('http') ? p : ORIGIN + p);
   return {
-    net: state, caches,
+    net: state, caches, posted,
     get: (p, init = {}) => dispatch(new Request(url(p), { method: 'GET', ...init })),
+    getFrom: (page, p, init = {}) => dispatch(new Request(url(p), { method: 'GET', ...init }), page),
     // a page being opened (a tab or a frame going to this address): the one kind of request a script cannot make
     visit: (p) => {
       const real = new Request(url(p), { method: 'GET', headers: { Accept: 'text/html' } });
