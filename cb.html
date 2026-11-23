@@ -29,6 +29,11 @@
   .hero { padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; }
   .hero-head { display: flex; gap: 16px; align-items: center; }
   .hero-head .sub { margin-top: 3px; color: #4b5563; }
+  #recheck { font-size: 14px; margin-top: 4px; min-height: 32px; }
+  .card.pulse { animation: pulse .9s ease-out; }
+  @keyframes pulse { from { box-shadow: 0 0 0 4px rgba(21,128,61,.35); } to { box-shadow: 0 0 0 0 rgba(21,128,61,0); } }
+  @media (prefers-reduced-motion: reduce) { .card.pulse { animation: none; } }
+  #recheck[disabled] { color: var(--quiet); text-decoration: none; cursor: default; }
   .icon { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; background: var(--rule); color: var(--quiet); }
   .icon.ok { background: var(--go); color: #fff; }
   .icon.warn { background: var(--warn-tint); color: var(--warn); }
@@ -116,6 +121,7 @@
         <div>
           <h2 id="hero-title">Looking at what is saved on this Chromebook…</h2>
           <p id="hero-sub" class="sub"></p>
+          <button id="recheck" class="linkish hidden" type="button">Check again</button>
         </div>
       </div>
       <div id="run-box" class="hidden">
@@ -160,6 +166,8 @@
       <section class="card" id="keep">
         <h3>Kept safe</h3>
         <p id="keep-say"></p>
+        <p id="keep-where" class="hidden"></p>
+        <p id="keep-at" class="sub" style="font-size:13px"></p>
         <div class="row" style="margin-top:10px"><button class="soft hidden" id="install" type="button">Install Jugnu on this Chromebook</button> <button class="linkish" id="keep-again" type="button">Check again</button></div>
       </section>
       <section class="card" id="check">
@@ -332,9 +340,19 @@
   }
   var installOffer = null; // Chrome's own offer to install this page (it makes it only for a page it finds installable)
   var protectedSaid = null;
+  /** Is Jugnu installed at this address? Inside its own window, yes; in an ordinary tab the browser is asked (the
+   *  manifest names this app in related_applications). An install is per address: one made at another address (another
+   *  port, the deployed service) is not this one, and does not protect what is saved here. */
+  function installedHere() {
+    if (window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches)) return Promise.resolve(true);
+    if (!navigator.getInstalledRelatedApps) return Promise.resolve(false);
+    return navigator.getInstalledRelatedApps().then(function (apps) { return (apps || []).some(function (a) { return a.platform === 'webapp'; }); }, function () { return false; });
+  }
   function protect() {
     var st = navigator.storage;
-    var installed = !!(window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches));
+    return installedHere().then(function (installed) { return protectWith(st, installed); });
+  }
+  function protectWith(st, installed) {
     var show = function (safe) {
       return space().then(function (sp) {
         var t = protectText({ safe: safe, installed: installed, canInstall: !!installOffer, used: sp.used });
@@ -343,6 +361,14 @@
         $('keep-say').className = t.ok ? 'ok' : t.ok === false ? 'off' : '';
         $('install').classList.toggle('hidden', !t.install);
         $('keep').classList.toggle('warn', t.ok === false);
+        // which address this is about: each address (and port) has its own install and its own saved files
+        $('keep-where').textContent = 'This is Jugnu at ' + location.host + '. Jugnu installed from another address does not count here.';
+        $('keep-where').classList.toggle('hidden', t.ok !== false);
+        // what the browser answered, and when (to the second: a press that changes nothing still shows it was asked)
+        $('keep-at').textContent = 'Checked ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ': ' +
+          (safe === true ? 'the browser has protected it' : safe === false ? 'the browser has not protected it yet' : 'the browser does not say') +
+          (installed ? ' (Jugnu is installed here)' : '') + '.';
+        $('keep').classList.remove('pulse'); void $('keep').offsetWidth; $('keep').classList.add('pulse');
         if (protectedSaid !== safe) { protectedSaid = safe; report({ protect: { persisted: safe, installed: installed, can_install: !!installOffer, used_mb: Math.round(sp.used / 1e6), device: DEVICE } }); }
         return safe;
       });
@@ -358,7 +384,10 @@
     offer.prompt();
     Promise.resolve(offer.userChoice).then(function () { return protect(); }, function () { return protect(); });
   };
-  $('keep-again').onclick = function () { protect(); };
+  $('keep-again').onclick = function () {
+    var b = $('keep-again'); b.disabled = true; b.textContent = 'Checking…';
+    protect().then(function () { b.disabled = false; b.textContent = 'Check again'; }, function () { b.disabled = false; b.textContent = 'Check again'; });
+  };
   setInterval(function () { if (protectedSaid !== true) protect(); }, 60000);
 
   /* ---------------- the run: steps, their progress, what is remembered ---------------- */
@@ -475,7 +504,8 @@
       out.sub = 'Get ready stopped before the end. Press Carry on with the Wi-Fi on: it picks up where it stopped.';
     } else if (coreOk && (vid.status === 'ok' || vid.status === 'off')) {
       out.state = 'ready'; out.title = 'Ready to use without Wi-Fi';
-      out.sub = 'Everything below opens on this Chromebook with the Wi-Fi off.';
+      out.sub = 'Everything below opens on this Chromebook with the Wi-Fi off.' + (d.refreshOpen ? ' The last check for new things stopped part-way: Carry on finishes it.' : '');
+      if (d.refreshOpen) out.action = 'Carry on checking';
     } else if (coreOk) {
       out.state = 'partial';
       out.title = vid.status === 'room' ? 'Ready, except some lesson videos' : vid.status === 'none' ? 'Ready, lesson videos not saved yet' : 'Ready, lesson videos not finished';
@@ -491,7 +521,12 @@
   var drive = lsJson('cb-drive', null);   // the last audit: {at, steps:[{step, total, missing}]}
   var lastRoom = null;                    // bytes Chrome still allows this site (status())
   var busy = false, stopped = false, checking = false, chooseOpen = false;
-  function undoneAdd(id) { var u = lsJson('cb-unfinished', []); if (u.indexOf(id) < 0) ls('cb-unfinished', JSON.stringify(u.concat([id]))); }
+  /* A run that stops part-way. The FIRST setup of a Chromebook stopping leaves it not ready (cb-unfinished). A run
+   * pressed on a Chromebook that was ready ("Check for new things", "Start again") only looks for new things: what
+   * was saved before is still on the drive, and the audit says so. Its stop is said, and does not undo "Ready"
+   * (cb-refresh-open). Seen 23 Nov 2026: a check cut short marked Storybooks and Games "Not finished", every file there. */
+  var undoneKey = 'cb-unfinished';
+  function undoneAdd(id) { var u = lsJson(undoneKey, []); if (u.indexOf(id) < 0) ls(undoneKey, JSON.stringify(u.concat([id]))); }
   function keepAudit(a) {
     if (!a || !a.steps) return;
     drive = { at: Date.now(), steps: a.steps.map(function (s) { return { step: s.step, total: s.total, missing: s.missing }; }) };
@@ -513,7 +548,7 @@
   function render() {
     var c = child();
     var st = driveState({ audit: drive, videos: lsJson('cb-videos', {}), sizes: lsJson('cb-video-sizes', {}), want: videoGrades() || videoDefault(lsJson('cb-video-all', ['1', '2', '3', '4', '5'])),
-      room: lastRoom, checking: checking, unfinished: lsJson('cb-unfinished', []), readyAt: Number(ls('cb-ready-at')) || null,
+      room: lastRoom, checking: checking, unfinished: lsJson('cb-unfinished', []), refreshOpen: lsJson('cb-refresh-open', []).length > 0, readyAt: Number(ls('cb-ready-at')) || null,
       running: busy ? { ids: steps.map(function (s) { return s.id; }), done: run.done, cur: cur && cur.id, curNote: cur && cur.el ? cur.el.querySelector('small').textContent.replace(/^— /, '') : '' } : null });
     var s = st.state;
     var look = s === 'running' || s === 'checking' ? 'run' : s === 'fresh' ? 'fresh' : st.title.indexOf('Ready') === 0 ? 'ok' : 'warn';
@@ -523,9 +558,12 @@
     var said = [st.sub];
     if (s === 'ready' || s === 'partial') {
       var readyAt = Number(ls('cb-ready-at')) || null;
-      said.push([readyAt ? 'Saved ' + when(readyAt) : '', drive && drive.at ? 'checked ' + when(drive.at) : ''].filter(Boolean).join(' · ') + (checking ? ' · checking again…' : ''));
+      said.push([readyAt ? 'Saved ' + when(readyAt) : '', drive && drive.at ? 'checked ' + when(drive.at) : ''].filter(Boolean).join(' · '));
     }
     $('hero-sub').textContent = said.filter(Boolean).join(' ');
+    // looking at the drive happens by itself each time the page opens; this is the same look, asked for
+    var rc = $('recheck'); rc.classList.toggle('hidden', !(s === 'ready' || s === 'partial' || s === 'fresh') || busy);
+    rc.disabled = checking; rc.textContent = checking ? 'Checking what is saved…' : 'Check again';
     $('areas').innerHTML = st.areas.map(function (a) {
       return '<li class="' + a.status + '" data-area="' + a.key + '"><span class="mark">' + (MARK[a.status] || '') + '</span>' +
         '<span><b>' + esc(a.name) + '</b>' + (a.what ? '<span class="what"> · ' + esc(a.what) + '</span>' : '') + (a.note ? '<small>' + esc(a.note) + '</small>' : '') + '</span>' +
@@ -546,7 +584,7 @@
     play.textContent = c ? 'Play as ' + c.name : KEY ? "Start playing · Who's playing?" : 'Start playing';
     var r = $('ready');
     r.className = settled ? 'soft' : 'big';
-    r.textContent = busy ? 'Getting ready…' : s === 'ready' ? 'Check for new things' : s === 'partial' ? st.action || 'Carry on' : Object.keys(run.done).length ? 'Carry on' : 'Get ready for offline';
+    r.textContent = busy ? 'Getting ready…' : s === 'ready' ? st.action || 'Check for new things' : s === 'partial' ? st.action || 'Carry on' : Object.keys(run.done).length ? 'Carry on' : 'Get ready for offline';
     $('hint').textContent = s === 'fresh' ? 'It takes a while (the lesson videos most of all). You can close this page part-way: it carries on where it stopped.' : '';
     var t = lsJson('cb-test', null);
     $('last-test').innerHTML = !t ? 'Not tested on this Chromebook yet.' + (settled ? ' Press <b>Test it with Wi-Fi off</b>: it opens everything saved here, as with the Wi-Fi off.' : '')
@@ -860,7 +898,7 @@
       if (s.failed) throw new Error(s.failed + ' files could not be saved');
       run.done[s.id] = { at: Date.now(), files: s.files, note: typeof note === 'string' ? note : (note && note.note) || (s.files ? s.files + ' files' : '') };
       saveRun(); mark(s, 'ok', run.done[s.id].note); overall(0);
-      ls('cb-unfinished', JSON.stringify(lsJson('cb-unfinished', []).filter(function (id) { return id !== s.id; })));
+      ls(undoneKey, JSON.stringify(lsJson(undoneKey, []).filter(function (id) { return id !== s.id; })));
       return true;
     }, function (e) {
       var why = String(e && e.message || e);
@@ -887,7 +925,8 @@
   function getReady() {
     $('ready').disabled = true; $('again').classList.add('hidden');
     full = false; busy = true; stopped = false; chooseOpen = false;
-    if (!lsJson('cb-unfinished', []).length) ls('cb-unfinished', '["?"]'); // until the steps are known
+    undoneKey = ls('cb-ready-at') && !lsJson('cb-unfinished', []).length ? 'cb-refresh-open' : 'cb-unfinished';
+    if (!lsJson(undoneKey, []).length) ls(undoneKey, '["?"]'); // until the steps are known
     render();
     run.running = true; run.started = run.started || Date.now(); saveRun();
     $('phase').textContent = 'Installing the offline worker…';
@@ -920,7 +959,7 @@
     }).then(function (how) {
       log('child home: ' + how);
       steps = BUILT_IN.concat((window.CB_READY || []).map(function (s, i) { return { id: 'x-' + String(s.name || i).toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: s.name || 'step ' + (i + 1), run: s.run, late: !!s.late, resumes: !!s.resumes, check: s.check }; }));
-      ls('cb-unfinished', JSON.stringify(steps.filter(function (s) { return !run.done[s.id]; }).map(function (s) { return s.id; })));
+      ls(undoneKey, JSON.stringify(steps.filter(function (s) { return !run.done[s.id]; }).map(function (s) { return s.id; })));
       drawSteps(); overall(0); render();
       return seq(steps.filter(function (s) { return !s.late; }));
     }).then(function (bad) {
@@ -962,7 +1001,7 @@
     }).then(function (badLate) {
       run.running = false; run.complete = !badLate.length; run.finished = Date.now(); saveRun();
       ls('cb-ready-at', String(run.finished)); busy = false;
-      if (!badLate.length) ls('cb-unfinished', null);
+      if (!badLate.length) { ls('cb-unfinished', null); ls('cb-refresh-open', null); }
       protect(); // asked again now that there is something to protect
       $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (protectedSaid === false ? ' It is not yet protected from clean-up: see "Kept safe".' : '') + (badLate.length ? ' Not finished: ' + badLate.map(function (s) { return s.name; }).join(', ') + ' (press Carry on).' : '');
       $('ready').disabled = false; render();
@@ -1157,6 +1196,12 @@
   // older than 12 hours, which the page no longer carries on from).
   if (!ls('cb-ready-at')) { var was = lsJson(RUN_KEY, null); if (was && was.complete && was.finished) ls('cb-ready-at', String(was.finished)); }
   if (drive && drive.steps && drive.steps.length) $('again').classList.remove('hidden');
+  (function () { // a check cut short on a Chromebook made ready before cb-refresh-open existed
+    var at = Number(ls('cb-ready-at')) || 0, r = lsJson(RUN_KEY, null), u = lsJson('cb-unfinished', []);
+    if (at && u.length && r && r.at > at && !lsJson('cb-refresh-open', []).length) { ls('cb-refresh-open', JSON.stringify(u)); ls('cb-unfinished', null); }
+  }());
+  $('recheck').onclick = function () { recheck(); };
+  if (lsJson('cb-refresh-open', []).length) stopped = false; // a check cut short is said under the title, not as a stopped setup
   $('choose').onclick = function () { chooseOpen = !chooseOpen; render(); };
   render();
   // What is on the drive is looked at again every time this page opens (the last answer shows meanwhile), except

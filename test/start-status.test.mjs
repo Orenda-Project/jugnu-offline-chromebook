@@ -121,3 +121,12 @@ test('a class ticked on a ready Chromebook: Ready, its videos not saved yet, and
   assert.equal(s.action, 'Save lesson videos');
   assert.equal(s.areas[3].note, 'not saved on this Chromebook yet');
 });
+
+test('a check for new things cut short on a ready Chromebook: still Ready, the stop is said, the button finishes it', { skip: !m }, () => {
+  // seen 23 Nov 2026: such a check stopped part-way marked Storybooks and Games "Not finished", every file on the drive
+  const s = driveState({ audit: audit(), videos: {}, sizes, want: [], unfinished: [], refreshOpen: true });
+  assert.equal(s.state, 'ready');
+  assert.deepEqual(s.areas.map((a) => a.status), ['ok', 'ok', 'ok', 'off']);
+  assert.match(s.sub, /last check for new things stopped part-way/);
+  assert.equal(s.action, 'Carry on checking');
+});
