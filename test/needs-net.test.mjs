@@ -8,16 +8,27 @@ import { load, tick } from './sw-harness.mjs';
 
 const STORE = 'https://store.example.r2.cloudflarestorage.com';
 
-test('online, a lesson video that is not saved streams from where it is: the range is passed on, and no whole copy is fetched beside it', async () => {
-  const sw = load({ fetch: async (req) => new Response(new Uint8Array(100), { status: 206, headers: { 'Content-Type': 'video/mp4', 'Content-Range': 'bytes 0-99/7340032' } }) });
+test('online, a lesson video that is not saved streams from where it is at once, and is saved whole beside it (23 Nov 2026)', async () => {
+  // Operator, 23 Nov 2026: a lesson of a class that is not saved is saved while it plays, streamed instantly (the
+  // child never waits; the lesson is downloaded twice, once to stream and once to keep)
+  const whole = new Uint8Array(1000);
+  const sw = load({ fetch: async (req) => (new URL(req.url).pathname === '/__cb/media'
+    ? new Response(whole, { status: 200, headers: { 'Content-Type': 'video/mp4', 'Content-Length': '1000', 'X-CB-Media': '1' } })
+    : new Response(new Uint8Array(100), { status: 206, headers: { 'Content-Type': 'video/mp4', 'Content-Range': 'bytes 0-99/1000' } })) });
   const res = await sw.get(`${STORE}/student-videos/3/C3L1_web.mp4?X-Amz-Signature=s`, { headers: { Range: 'bytes=0-99' } });
   assert.equal(res.status, 206);
-  assert.equal(res.headers.get('Content-Range'), 'bytes 0-99/7340032');
-  await tick(30);
-  assert.equal(sw.net.calls.length, 1, 'one request: the player\'s own');
-  assert.equal(sw.net.calls[0].url, `${STORE}/student-videos/3/C3L1_web.mp4?X-Amz-Signature=s`, 'straight to where the video is (its signed link), not through a download');
+  assert.equal(res.headers.get('Content-Range'), 'bytes 0-99/1000');
+  assert.equal(sw.net.calls[0].url, `${STORE}/student-videos/3/C3L1_web.mp4?X-Amz-Signature=s`, 'the player\'s own request goes straight to where the video is, first');
   assert.equal(sw.net.calls[0].headers.range, 'bytes=0-99');
-  assert.equal(await sw.isKept(`${STORE}/student-videos/3/C3L1_web.mp4`), false, 'playing a video does not save it (Get ready does)');
+  await tick(40);
+  const save = sw.net.calls.filter((c) => c.url.startsWith('/__cb/media?u='));
+  assert.equal(save.length, 1, 'one whole copy, through this site');
+  assert.equal(save[0].headers.range, undefined, 'the whole file, not a range');
+  assert.deepEqual(await sw.message({ type: 'have', urls: [`${STORE}/student-videos/3/C3L1_web.mp4?X-Amz-Signature=other`] }), [true], 'on the drive, whatever its signature');
+  const calls = sw.net.calls.length;
+  const next = await sw.get(`${STORE}/student-videos/3/C3L1_web.mp4?X-Amz-Signature=s`, { headers: { Range: 'bytes=500-599' } });
+  assert.equal(next.headers.get('Content-Range'), 'bytes 500-599/1000', 'the rest of the lesson comes from the drive');
+  assert.equal(sw.net.calls.length, calls, 'nothing more from the network');
 });
 
 test('online, a page that is not saved is the server\'s page (and is then kept)', async () => {

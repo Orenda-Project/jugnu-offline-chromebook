@@ -288,6 +288,99 @@
   window.addEventListener('online', function () { homeSync(); });
   setInterval(function () { if (navigator.onLine) homeSync(); }, 600000);
 
+  /* SAVED WHILE IT PLAYS (lane/home, 23 Nov 2026; pilot-sw.js has the rest). A lesson video that is not saved is saved
+   * whole while it plays. A save the Wi-Fi cut short goes again when a page sees the network back (now, when it comes
+   * back, and every ten minutes). With no network the Videos door lists only lessons that play, and this note says
+   * how much of the class that is, which classes ARE saved (a tap opens one), and what did not finish saving. */
+  function playedRetry() { var sw = navigator.serviceWorker.controller; if (sw && navigator.onLine) sw.postMessage({ type: 'played-retry' }); }
+  setTimeout(playedRetry, 4000);
+  window.addEventListener('online', function () { setTimeout(playedRetry, 1500); classNoteClear(); });
+  setInterval(playedRetry, 600000);
+  var CLASS_WORDS = {
+    en: {
+      cls: function (g) { return 'Class ' + g; },
+      none: function (g) { return this.cls(g) + "'s videos are not on this Chromebook yet"; },
+      noneSay: 'They play when the Wi-Fi is on.',
+      some: function (n, m, g) { return n + ' of ' + m + ' ' + this.cls(g) + ' lessons are on this Chromebook'; },
+      someSay: 'The rest play when the Wi-Fi is on.',
+      others: 'These classes are saved:',
+      nowhere: 'Ask your teacher to turn on the Wi-Fi, or play something that is saved.',
+      cut: function (n) { return (n === 1 ? '1 lesson' : n + ' lessons') + ' did not finish saving. It will when the Wi-Fi is back.'; },
+    },
+    ur: {
+      cls: function (g) { return 'جماعت ' + g; },
+      none: function (g) { return this.cls(g) + ' کی ویڈیوز ابھی اس کروم بک پر نہیں ہیں'; },
+      noneSay: 'یہ وائی فائی چلنے پر چلیں گی۔',
+      some: function (n, m, g) { return this.cls(g) + ' کے ' + m + ' میں سے ' + n + ' سبق اس کروم بک پر ہیں'; },
+      someSay: 'باقی وائی فائی چلنے پر چلیں گے۔',
+      others: 'یہ جماعتیں محفوظ ہیں:',
+      nowhere: 'اپنے ٹیچر سے وائی فائی چلانے کو کہیں، یا کوئی محفوظ چیز کھیلیں۔',
+      cut: function (n) { return n + ' سبق پورا محفوظ نہیں ہو سکا۔ وائی فائی واپس آنے پر ہو جائے گا۔'; },
+    },
+  };
+  var libSeen = {}, classTimer = null; // class -> list -> {kept, total}
+  function classNoteClear() { var had = document.querySelector('[data-cb-class-note]'); if (had) had.remove(); libSeen = {}; }
+  function onVideos() { return /^#videos/.test(location.hash || '') || /^\/lib\//.test(location.pathname); }
+  window.addEventListener('hashchange', function () { if (!onVideos()) classNoteClear(); });
+  /** Classes with lessons on this Chromebook: Get ready's (cb-videos) and those saved while they played. */
+  function savedClasses(st) {
+    var out = {}, gr = {};
+    try { gr = JSON.parse(localStorage.getItem('cb-videos') || '{}'); } catch (e) { gr = {}; }
+    Object.keys(gr).forEach(function (g) { if (gr[g] && gr[g].saved > 0) out[g] = (out[g] || 0) + gr[g].saved; });
+    Object.keys((st && st.played) || {}).forEach(function (g) { if (g !== '?') out[g] = (out[g] || 0) + st.played[g]; });
+    return out;
+  }
+  function classNote(g) {
+    var seen = libSeen[g]; if (!seen || !document.body || !onVideos()) return;
+    var kept = 0, total = 0;
+    // the class's whole count when the worker gave it (its list of subjects), else the subjects' lists added up
+    if (seen['*']) { kept = seen['*'].kept; total = seen['*'].total; }
+    else Object.keys(seen).forEach(function (s) { kept += seen[s].kept; total += seen[s].total; });
+    var sw = navigator.serviceWorker.controller;
+    (sw ? ask(sw, { type: 'played-status' }, 3000) : Promise.resolve(null)).then(function (st) {
+      var had = document.querySelector('[data-cb-class-note]'); if (had) had.remove();
+      var cut = ((st && st.wanted) || []).filter(function (w) { return String(w.g) === String(g); }).length;
+      if (kept >= total && !cut) return;
+      var w = needsWords() === NEEDS.ur ? CLASS_WORDS.ur : CLASS_WORDS.en;
+      var others = savedClasses(st); delete others[g];
+      var names = Object.keys(others).sort(function (a, b) { return (Number(a) || -1) - (Number(b) || -1); });
+      var lines = [kept ? w.someSay : w.noneSay];
+      if (cut) lines.push(w.cut(cut));
+      if (!kept && !names.length) lines.push(w.nowhere);
+      if (names.length) lines.push(w.others);
+      var card = needsCard(kept ? w.some(kept, total, g) : w.none(g), lines.join(' '), true);
+      card.setAttribute('data-cb-class-note', '');
+      card.style.cssText += ';position:fixed;left:50%;bottom:104px;transform:translateX(-50%);z-index:2147483646;width:min(600px,94vw);box-sizing:border-box;flex-wrap:wrap';
+      if (kept) { var pic = card.querySelector('img'); if (pic) pic.remove(); } // some lessons play: a smaller note
+      if (names.length) {
+        var row = document.createElement('div');
+        row.style.cssText = 'flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;justify-content:center';
+        names.forEach(function (c) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.textContent = w.cls(c);
+          b.style.cssText = 'min-height:44px;padding:8px 16px;border-radius:999px;border:2px solid #f1c27a;background:#fff;color:#1f2937;font:600 16px system-ui,sans-serif;cursor:pointer';
+          b.onclick = function () {
+            // the door opens on the class this Chromebook's home child was last shown (Jugnu: wq_sel_videos.<child>)
+            try { var kid = localStorage.getItem('cb-kid'); if (kid) localStorage.setItem('wq_sel_videos.' + kid, String(c)); } catch (e) {}
+            location.reload();
+          };
+          row.appendChild(b);
+        });
+        card.appendChild(row);
+      }
+      document.body.appendChild(card);
+    });
+  }
+  navigator.serviceWorker.addEventListener('message', function (e) {
+    var d = e.data || {};
+    if (d.type !== 'cb-lib-offline' || d.g == null) return;
+    var g = String(d.g);
+    libSeen[g] = libSeen[g] || {};
+    libSeen[g][d.s || '-'] = { kept: d.kept, total: d.total };
+    clearTimeout(classTimer);
+    classTimer = setTimeout(function () { classNote(g); }, 400);
+  });
+
   function refresh() {
     var sw = navigator.serviceWorker.controller;
     var offline = !navigator.onLine;

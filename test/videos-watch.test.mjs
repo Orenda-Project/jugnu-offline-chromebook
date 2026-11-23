@@ -120,7 +120,7 @@ test('worker: with a network a start goes to the server untouched, record or no 
   assert.equal(j.watch.url, `${STORE}/x_web.mp4?sig=1`);
 });
 
-test('worker, no network: a saved list of lessons names only the lesson pages that are on the drive', async () => {
+test('worker, no network: a saved list of lessons names only the lessons that play (a record on the drive), and of those only the pages on the drive', async () => {
   const list = { chapters: [{ name: 'One', videos: [{ vid: 'a', title: 'A', code: 'AAA111', k: 'ka' }, { vid: 'b', title: 'B', code: 'BBB222', k: 'kb' }, { vid: 'c', title: 'C' }] }] };
   const sw = load({ fetch: async () => jsonRes(list) });
   const url = '/api/wq/lib/h/not-a-home-link?kid=kid1&l=en&g=5&s=English';
@@ -128,10 +128,11 @@ test('worker, no network: a saved list of lessons names only the lesson pages th
   assert.equal(online.chapters[0].videos[1].code, 'BBB222', 'with a network the list is Jugnu\'s own');
   await new Promise((r) => setTimeout(r, 20));
   await sw.kept('/q/AAA111?k=ka&via=videos', new Response('<html>a</html>', { headers: { 'Content-Type': 'text/html' } }));
+  await sw.message({ type: 'watch-keep', recs: [{ vid: 'a', url: `${STORE}/a_web.mp4` }, { vid: 'b', url: `${STORE}/b_web.mp4` }] }); // c is not saved
   sw.net.down = true;
   const off = await (await sw.get(url)).json();
   assert.equal(off.chapters[0].videos[0].code, 'AAA111', 'its page is on the drive: named');
   assert.equal(off.chapters[0].videos[1].code, undefined, 'its page is not: the door will start it, and get the saved video');
   assert.equal(off.chapters[0].videos[1].title, 'B');
-  assert.equal(off.chapters[0].videos.length, 3);
+  assert.equal(off.chapters[0].videos.length, 2, 'c is not on this Chromebook: not offered (23 Nov 2026)');
 });

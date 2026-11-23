@@ -6,26 +6,85 @@
 <link rel="manifest" href="/cb/app.webmanifest">
 <title>Jugnu on this Chromebook</title>
 <style>
-  :root { color-scheme: light; --ink: #1f2937; --quiet: #6b7280; --go: #15803d; --warn: #b45309; --bad: #b91c1c; --card: #fffdf7; --line: #e7dfc9; }
-  body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: #f6f1e4; color: var(--ink); }
-  main { max-width: 860px; margin: 0 auto; padding: 16px 16px 48px; }
-  h1 { font-size: 24px; margin: 0 0 2px; }
-  .sub { color: var(--quiet); margin: 0 0 12px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 0 0 12px; }
-  .card h2 { font-size: 17px; margin: 0 0 6px; }
-  .card p { margin: 4px 0 8px; }
-  button.big, a.big { font: 600 17px system-ui, sans-serif; padding: 12px 20px; border-radius: 10px; border: 0; background: var(--go); color: #fff; cursor: pointer; display: inline-block; text-decoration: none; }
+  :root { color-scheme: light; --ink: #1f2937; --soft: #374151; --quiet: #6b7280; --go: #15803d; --go-tint: #e8f5ec; --warn: #b45309; --warn-tint: #fdf0dc; --warn-line: #f0d9b0; --bad: #b91c1c; --card: #fffdf7; --line: #e7dfc9; --rule: #efe7d2; --bg: #f6f1e4; }
+  body { margin: 0; font: 16px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  main { max-width: 1270px; margin: 0 auto; padding: 20px 24px 48px; box-sizing: border-box; }
+  h1 { font-size: 24px; margin: 0; }
+  h2 { font-size: 26px; margin: 0; line-height: 1.2; }
+  h3 { font-size: 16px; margin: 0 0 6px; }
+  .sub { color: var(--quiet); margin: 0; font-size: 15px; }
+  .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 18px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; font-size: 14px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: #4b5563; }
+  #net.on { background: var(--go-tint); border-color: transparent; color: var(--go); font-weight: 600; }
+  #net.off { background: var(--warn-tint); border-color: transparent; color: var(--warn); font-weight: 600; }
+  #net::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  aside { display: flex; flex-direction: column; gap: 16px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+  .card.warn { background: var(--warn-tint); border-color: var(--warn-line); }
+  .card p { margin: 0; font-size: 14px; color: #4b5563; }
+  .card p + p { margin-top: 6px; }
+  .hero { padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; }
+  .hero-head { display: flex; gap: 16px; align-items: center; }
+  .hero-head .sub { margin-top: 3px; color: #4b5563; }
+  #recheck { font-size: 14px; margin-top: 4px; min-height: 32px; }
+  .card.pulse { animation: pulse .9s ease-out; }
+  @keyframes pulse { from { box-shadow: 0 0 0 4px rgba(21,128,61,.35); } to { box-shadow: 0 0 0 0 rgba(21,128,61,0); } }
+  @media (prefers-reduced-motion: reduce) { .card.pulse { animation: none; } }
+  #recheck[disabled] { color: var(--quiet); text-decoration: none; cursor: default; }
+  .icon { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; background: var(--rule); color: var(--quiet); }
+  .icon.ok { background: var(--go); color: #fff; }
+  .icon.warn { background: var(--warn-tint); color: var(--warn); }
+  .icon.run { background: var(--go-tint); color: var(--go); }
+  .icon.run svg { animation: spin 1.2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .icon.run svg { animation: none; } }
+  .areas { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+  .areas li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 120px; gap: 12px; align-items: center; padding: 11px 6px; border-bottom: 1px solid var(--rule); font-size: 15px; }
+  @media (max-width: 600px) { .areas li { grid-template-columns: 24px minmax(0, 1fr) auto; } .areas .size { display: none; } .hero { padding: 20px 16px; } .icon { width: 44px; height: 44px; } }
+  .areas .what { color: var(--quiet); }
+  .areas small { display: block; color: var(--soft); font-size: 14px; }
+  .areas .size { color: var(--quiet); text-align: right; white-space: nowrap; }
+  .areas .st { text-align: right; font-weight: 600; color: var(--quiet); }
+  .areas .ok .st, .areas .ok .mark { color: var(--go); }
+  .areas .run { background: #f3f9f4; }
+  .areas .run .st, .areas .run .mark { color: var(--go); }
+  .areas .missing, .areas .room { background: #fdf6ea; }
+  .areas .missing .st, .areas .missing .mark, .areas .room .st, .areas .room .mark { color: var(--warn); }
+  .areas .none .mark::before, .areas .wait .mark::before, .areas .off .mark::before, .areas .part .mark::before { content: ''; display: block; width: 14px; height: 14px; margin-left: 3px; border-radius: 50%; border: 2px solid #c9bfa4; }
+  .bar { height: 14px; background: #ebe3cc; border-radius: 8px; overflow: hidden; margin: 0 0 8px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--go); border-radius: 8px; transition: width .3s; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  button.big, a.big { font: 700 18px system-ui, sans-serif; padding: 12px 26px; min-height: 48px; box-sizing: border-box; border-radius: 12px; border: 0; background: var(--go); color: #fff; cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; }
   button.big[disabled] { background: #9ca3af; cursor: default; }
-  button.soft { font: 600 15px system-ui, sans-serif; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+  button.soft, a.soft { font: 600 15px system-ui, sans-serif; padding: 10px 16px; min-height: 48px; box-sizing: border-box; border-radius: 12px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; text-decoration: none; }
   button.soft[disabled] { color: #9ca3af; cursor: default; }
-  .bar { height: 10px; background: #e5e7eb; border-radius: 6px; overflow: hidden; margin: 10px 0 6px; }
-  .bar i { display: block; height: 100%; width: 0; background: var(--go); transition: width .3s; }
+  .card.warn button.soft { border-color: #e0c79b; }
+  button.linkish { font: inherit; border: 0; padding: 0; background: none; color: var(--go); text-decoration: underline; cursor: pointer; }
+  a { color: var(--go); }
   .state { font-weight: 600; }
   .state.off { color: var(--warn); }
+  #keep-say b { color: var(--go); }
+  #keep-say.off b { color: var(--warn); }
+  .card .num { font-size: 28px; font-weight: 700; color: var(--ink) !important; margin: 0; }
+  .card .num.waiting { color: var(--warn) !important; }
+  .vids { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .vids > b { grid-column: 1 / -1; font-size: 15px; }
+  .vids > b small { font-weight: 400; color: var(--quiet); }
+  .vids label { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 10px 12px; border-radius: 10px; border: 2px solid var(--line); background: #fff; font-size: 14px; font-weight: 700; cursor: pointer; }
+  .vids label:has(input:checked) { border-color: var(--go); }
+  .vids input { width: 18px; height: 18px; accent-color: var(--go); margin: 0; }
+  .vids label small { flex-basis: 100%; font-weight: 400; color: var(--quiet); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
   .grid a { display: block; padding: 12px; border-radius: 10px; background: #fff; border: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 600; }
   .grid a small { display: block; font-weight: 400; color: var(--quiet); }
-  ol { margin: 6px 0 0; padding-left: 22px; }
+  details { border-top: 1px solid var(--rule); padding-top: 12px; }
+  summary { cursor: pointer; font-weight: 600; color: var(--soft); min-height: 32px; }
+  details > * + * { margin-top: 10px; }
+  details h3 { margin-top: 14px; }
+  ol.tips { margin: 0; padding-left: 20px; font-size: 14px; color: var(--soft); display: flex; flex-direction: column; gap: 6px; }
   #steps { list-style: none; margin: 8px 0 0; padding: 0; columns: 2; column-gap: 18px; font-size: 14px; }
   #steps li { break-inside: avoid; padding: 2px 0 2px 22px; position: relative; color: var(--quiet); }
   #steps li::before { content: '○'; position: absolute; left: 2px; }
@@ -36,71 +95,92 @@
   #steps li.bad { color: var(--bad); }
   #steps li.bad::before { content: '!'; font-weight: 700; }
   #steps li small { font-weight: 400; color: var(--quiet); }
-  #log { font: 12px/1.4 ui-monospace, monospace; color: var(--quiet); white-space: pre-wrap; max-height: 110px; overflow: auto; margin-top: 6px; }
-  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-  .vids label { display: inline-block; margin: 2px 12px 2px 0; white-space: nowrap; }
-  .vids small { color: var(--quiet); }
-  #test-out { font-size: 14px; margin-top: 8px; }
+  #log { font: 12px/1.4 ui-monospace, monospace; color: var(--quiet); white-space: pre-wrap; max-height: 160px; overflow: auto; }
+  #test-out { font-size: 14px; }
+  #test-out:empty { display: none; }
   #test-out .ok { color: var(--go); font-weight: 600; }
   #test-out .bad { color: var(--bad); font-weight: 600; }
   #test-out ul { margin: 4px 0 8px; padding-left: 20px; }
   #test-out li { margin: 1px 0; }
-  .hidden { display: none; }
+  #outbox { margin-top: 6px; font-size: 14px; color: var(--soft); }
+  .hidden { display: none !important; }
   iframe.warm { position: absolute; width: 1366px; height: 633px; left: -20000px; top: 0; border: 0; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Jugnu on this Chromebook</h1>
-  <p class="sub">Network: <span id="net" class="state">…</span> · <span id="kept">0</span> files saved here · <span id="space">…</span></p>
+  <header class="top">
+    <h1>Jugnu on this Chromebook</h1>
+    <div class="pills"><span id="net" class="pill">…</span><span id="space" class="pill">…</span></div>
+  </header>
 
-  <div class="card" id="step1">
-    <h2>1. Get ready for offline (Wi-Fi on)</h2>
-    <p>Saves Jugnu on this Chromebook: the child home, storybooks, games, quizzes and lesson videos. It can be stopped and pressed again: it carries on from where it was.</p>
-    <div class="vids" id="vids"></div>
-    <div class="row">
-      <button class="big" id="ready">Get ready for offline</button>
-      <button class="soft hidden" id="again" type="button">Start again from the beginning</button>
-    </div>
-    <div class="bar"><i id="pct"></i></div>
-    <div id="phase" class="sub"></div>
-    <ol id="steps"></ol>
-    <div id="log"></div>
-  </div>
+  <div class="cols">
+    <section class="card hero" id="step1">
+      <div class="hero-head">
+        <span id="hero-icon" class="icon" aria-hidden="true"></span>
+        <div>
+          <h2 id="hero-title">Looking at what is saved on this Chromebook…</h2>
+          <p id="hero-sub" class="sub"></p>
+          <button id="recheck" class="linkish hidden" type="button">Check again</button>
+        </div>
+      </div>
+      <div id="run-box" class="hidden">
+        <div class="bar"><i id="pct"></i></div>
+        <div id="phase" class="sub"></div>
+      </div>
+      <ul id="areas" class="areas"></ul>
+      <div id="vids-box" class="hidden"><div class="vids" id="vids"></div></div>
+      <div class="row">
+        <a class="big hidden" id="play" href="/who">Start playing</a>
+        <button class="big" id="ready" type="button">Get ready for offline</button>
+        <button class="soft hidden" id="test" type="button">Test it with Wi-Fi off</button>
+        <button class="soft hidden" id="choose" type="button">Choose classes</button>
+        <span id="test-now" class="sub"></span>
+      </div>
+      <p id="hint" class="sub"></p>
+      <div id="test-out"></div>
+      <details id="details">
+        <summary>Show details</summary>
+        <p class="sub"><span id="kept">0</span> files kept in Jugnu's app store on this Chromebook (lesson videos are kept apart).</p>
+        <ol id="steps"></ol>
+        <div id="log"></div>
+        <div id="step2" class="hidden"><h3>Open something directly</h3><div class="grid" id="links"></div></div>
+      </details>
+    </section>
 
-  <div class="card" id="keep">
-    <h2>Keep what is saved</h2>
-    <p id="keep-say"></p>
-    <div class="row"><button class="big hidden" id="install" type="button">Install Jugnu on this Chromebook</button> <button class="soft" id="keep-again" type="button">Check again</button></div>
-  </div>
-
-  <div class="card" id="check">
-    <h2>Check this Chromebook</h2>
-    <p>Opens every saved page, story, game and video from this Chromebook alone, as with the Wi-Fi off, and lists anything missing. Wi-Fi can stay on.</p>
-    <div class="row"><button class="soft" id="test" type="button">Check that everything opens without Wi-Fi</button> <span id="test-now" class="sub" style="margin:0"></span></div>
-    <div id="test-out"></div>
-  </div>
-
-  <div class="card hidden" id="who">
-    <h2>Who's playing?</h2>
-    <p id="child" class="state"></p>
-    <p><a class="big" id="pick" href="/who">Who's playing? Tap here</a></p>
-  </div>
-
-  <div class="card hidden" id="step2">
-    <h2>2. Turn Wi-Fi off, then play</h2>
-    <ol>
-      <li>Click the Wi-Fi icon (bottom right) and switch Wi-Fi <b>off</b>. "Network" above turns orange.</li>
-      <li>Open any of these and play. Everything comes from this Chromebook.</li>
-    </ol>
-    <div class="grid" id="links" style="margin-top:10px"></div>
-    <p class="sub" style="margin-top:10px">Another child's turn? <button id="next" class="soft">Next child</button> (the quiz forgets the last child on this Chromebook)</p>
-  </div>
-
-  <div class="card hidden" id="step3">
-    <h2>3. Turn Wi-Fi back on</h2>
-    <p>Quizzes played offline wait on this Chromebook and send themselves when Wi-Fi is back.</p>
-    <div id="outbox" class="state">Nothing waiting.</div>
+    <aside>
+      <section class="card hidden" id="tips">
+        <h3>Before you start</h3>
+        <ol class="tips">
+          <li>Sign in with the school's Google account, <b>not Guest</b>. Guest wipes everything when it closes.</li>
+          <li>Plug the Chromebook in. Saving the lesson videos takes a while.</li>
+          <li>Keep the Wi-Fi on until this page says <b>Ready</b>.</li>
+        </ol>
+      </section>
+      <section class="card" id="step3">
+        <h3>Quiz answers waiting to send</h3>
+        <p class="num" id="wait-n">0</p>
+        <p id="wait-say">Nothing waiting.</p>
+        <div id="outbox"></div>
+      </section>
+      <section class="card" id="keep">
+        <h3>Kept safe</h3>
+        <p id="keep-say"></p>
+        <p id="keep-where" class="hidden"></p>
+        <p id="keep-at" class="sub" style="font-size:13px"></p>
+        <div class="row" style="margin-top:10px"><button class="soft hidden" id="install" type="button">Install Jugnu on this Chromebook</button> <button class="linkish" id="keep-again" type="button">Check again</button></div>
+      </section>
+      <section class="card" id="check">
+        <h3>Last test with Wi-Fi off</h3>
+        <p id="last-test">Not tested on this Chromebook yet.</p>
+      </section>
+      <section class="card" id="who">
+        <h3>This Chromebook</h3>
+        <p id="child" class="state"></p>
+        <p><a id="pick" href="/who">Who's playing?</a> · <button id="next" class="linkish" type="button">Next child</button></p>
+        <p><button class="linkish hidden" id="again" type="button">Start again from the beginning</button></p>
+      </section>
+    </aside>
   </div>
 </main>
 <script>
@@ -138,10 +218,11 @@
   function child() { return lsJson('cb-child', null); }
   function showChild() {
     var c = child();
-    if (!KEY) return;
-    $('who').classList.remove('hidden');
+    if (!KEY) { $('child').textContent = 'No class lists here yet: open this Chromebook\'s setup link once (it ends in ?key=…).'; $('child').className = ''; $('pick').classList.add('hidden'); return; }
+    $('child').className = 'state';
     $('child').textContent = c ? ('Now playing: ' + c.name + ' (Class ' + c.grade + '-' + c.section + (c.roll ? ', roll ' + c.roll : '') + (c.added ? ', new' : '') + ')') : 'No child picked yet.';
-    $('pick').textContent = c ? 'Not ' + c.name + '? Pick who is playing' : "Who's playing? Tap here";
+    $('pick').textContent = c ? 'Not ' + c.name + '? Pick who is playing' : "Who's playing?";
+    if (typeof render === 'function' && $('hero-title')) renderSoon();
   }
   function log(t) { var l = $('log'); l.textContent += t + '\n'; l.scrollTop = l.scrollHeight; }
   var asking = []; // questions put to the offline worker and not yet answered
@@ -218,14 +299,19 @@
     }, function () { return { used: 0, free: null, room: null, safe: null }; });
   }
   function status() {
-    var on = navigator.onLine; $('net').textContent = on ? 'online' : 'OFF'; $('net').className = 'state' + (on ? '' : ' off');
+    var on = navigator.onLine; $('net').textContent = on ? 'Online' : 'Offline'; $('net').className = 'pill ' + (on ? 'on' : 'off');
     ask({ type: 'stats' }).then(function (s) { if (s) $('kept').textContent = s.kept; });
-    space().then(function (s) { $('space').textContent = mb(s.used) + ' used' + (s.room == null ? '' : ', Chrome allows ' + mb(s.room) + ' more here') + (s.safe === false ? ' · not yet protected from clean-up' : s.safe === true ? ' · protected from clean-up' : ''); });
+    space().then(function (s) { lastRoom = s.room; $('space').textContent = (s.used >= 1e6 ? mb(s.used) + ' saved' : 'Nothing saved yet') + (s.room == null ? '' : ' · Chrome allows ' + mb(s.room) + ' more here'); });
     ask({ type: 'outbox' }).then(function (l) {
-      if (!l || !l.length) return;
-      $('step3').classList.remove('hidden');
-      $('outbox').innerHTML = l.map(function (r) {
-        return (r.done ? '✓ Sent: ' : '⏳ Waiting to send: ') + esc(r.name || 'a child') + ' — ' + r.answers + ' answers' + (r.err && !r.done ? ' (will retry)' : '');
+      if (!l) return;
+      var wait = l.filter(function (r) { return !r.done; });
+      $('wait-n').textContent = wait.length; $('wait-n').className = 'num' + (wait.length ? ' waiting' : '');
+      $('step3').classList.toggle('warn', wait.length > 0);
+      $('wait-say').textContent = wait.length
+        ? (wait.length === 1 ? 'A quiz played here waits' : 'Quizzes played here wait') + ' on this Chromebook. ' + (wait.length === 1 ? 'It sends by itself' : 'They send by themselves') + ' when the Wi-Fi is back: nothing to press.'
+        : l.length ? 'Nothing waiting. Every quiz played here has been sent.' : 'Nothing waiting.';
+      $('outbox').innerHTML = wait.map(function (r) {
+        return esc(r.name || 'a child') + ': ' + r.answers + ' answers' + (r.err ? ' (will try again)' : '');
       }).join('<br>');
     });
     if (on && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'report' });
@@ -254,14 +340,35 @@
   }
   var installOffer = null; // Chrome's own offer to install this page (it makes it only for a page it finds installable)
   var protectedSaid = null;
+  /** Is Jugnu installed at this address? Inside its own window, yes; in an ordinary tab the browser is asked (the
+   *  manifest names this app in related_applications). An install is per address: one made at another address (another
+   *  port, the deployed service) is not this one, and does not protect what is saved here. */
+  function installedHere() {
+    if (window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches)) return Promise.resolve(true);
+    if (!navigator.getInstalledRelatedApps) return Promise.resolve(false);
+    return navigator.getInstalledRelatedApps().then(function (apps) { return (apps || []).some(function (a) { return a.platform === 'webapp'; }); }, function () { return false; });
+  }
   function protect() {
     var st = navigator.storage;
-    var installed = !!(window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches));
+    return installedHere().then(function (installed) { return protectWith(st, installed); });
+  }
+  function protectWith(st, installed) {
     var show = function (safe) {
       return space().then(function (sp) {
         var t = protectText({ safe: safe, installed: installed, canInstall: !!installOffer, used: sp.used });
-        $('keep-say').textContent = t.say; $('keep-say').className = t.ok ? 'state' : t.ok === false ? 'state off' : '';
+        var cut = t.say.indexOf('. ') + 1; // the first sentence ("Protected." / "Not protected yet.") is the answer; the rest explains
+        $('keep-say').innerHTML = cut > 0 && t.ok != null ? '<b>' + esc(t.say.slice(0, cut)) + '</b>' + esc(t.say.slice(cut)) : esc(t.say);
+        $('keep-say').className = t.ok ? 'ok' : t.ok === false ? 'off' : '';
         $('install').classList.toggle('hidden', !t.install);
+        $('keep').classList.toggle('warn', t.ok === false);
+        // which address this is about: each address (and port) has its own install and its own saved files
+        $('keep-where').textContent = 'This is Jugnu at ' + location.host + '. Jugnu installed from another address does not count here.';
+        $('keep-where').classList.toggle('hidden', t.ok !== false);
+        // what the browser answered, and when (to the second: a press that changes nothing still shows it was asked)
+        $('keep-at').textContent = 'Checked ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ': ' +
+          (safe === true ? 'the browser has protected it' : safe === false ? 'the browser has not protected it yet' : 'the browser does not say') +
+          (installed ? ' (Jugnu is installed here)' : '') + '.';
+        $('keep').classList.remove('pulse'); void $('keep').offsetWidth; $('keep').classList.add('pulse');
         if (protectedSaid !== safe) { protectedSaid = safe; report({ protect: { persisted: safe, installed: installed, can_install: !!installOffer, used_mb: Math.round(sp.used / 1e6), device: DEVICE } }); }
         return safe;
       });
@@ -277,7 +384,10 @@
     offer.prompt();
     Promise.resolve(offer.userChoice).then(function () { return protect(); }, function () { return protect(); });
   };
-  $('keep-again').onclick = function () { protect(); };
+  $('keep-again').onclick = function () {
+    var b = $('keep-again'); b.disabled = true; b.textContent = 'Checking…';
+    protect().then(function () { b.disabled = false; b.textContent = 'Check again'; }, function () { b.disabled = false; b.textContent = 'Check again'; });
+  };
   setInterval(function () { if (protectedSaid !== true) protect(); }, 60000);
 
   /* ---------------- the run: steps, their progress, what is remembered ---------------- */
@@ -296,11 +406,204 @@
   var run = loadRun();
   function saveRun() { ls(RUN_KEY, JSON.stringify(run)); }
 
+  /* ---------------- what this page says at the top: what is ON THE DRIVE, not what this page remembers ----------------
+   * The run above is forgotten after 12 hours (so that Get ready starts from the top), and the page used to forget with
+   * it that the Chromebook was ready: a Chromebook with all of it saved two days before showed a bare "Get ready" button
+   * (23 Nov 2026). What the page says now comes from the worker's own audit, the same proof Get ready ends with (every
+   * file each step set out to save is on the drive), kept here (cb-drive) so it shows at once and checked again when
+   * the page opens, and from the lesson videos' own record of each class (cb-videos).
+   *   driveState(d)  pure: d = { audit: {at, steps:[{step, total, missing}]} | null, videos: cb-videos, sizes:
+   *                  cb-video-sizes, want: the classes whose videos to save, room: bytes Chrome still allows | null,
+   *                  running: null | {ids, done:{id:1}, cur, curNote}, readyAt, checking, unfinished: step ids a Get
+   *                  ready that did not end left undone ('?': it stopped before its steps were known) }
+   *                  A step that never ran has no list on the drive, so the audit alone cannot see it: an area with an
+   *                  unfinished step is never "Saved", and an unfinished run is never "Ready".
+   *                  -> { state: fresh | checking | running | ready | partial, title, sub, areas:[{key, name, what,
+   *                       status: ok | missing | none | room | off | run | part | wait, label, note, size}] } */
+  function driveState(d) {
+    var big = function (m) { return m >= 1000 ? (m / 1000).toFixed(1) + ' GB' : Math.round(m) + ' MB'; };
+    var count = function (n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + ' files'; };
+    var classes = function (gs) {
+      var n = gs.map(Number); var run = n.length > 2 && n.every(function (x, i) { return i === 0 || x === n[i - 1] + 1; });
+      if (gs.length === 1) return 'Class ' + gs[0];
+      return 'Classes ' + (run ? gs[0] + ' to ' + gs[gs.length - 1] : gs.slice(0, -1).join(', ') + ' and ' + gs[gs.length - 1]);
+    };
+    var areaOf = function (id) { return /video/.test(id) ? 'videos' : /stor/.test(id) ? 'stories' : /game|speech/.test(id) ? 'games' : 'home'; };
+    var LABEL = { part: 'Partly saved', ok: 'Saved', missing: 'Not finished', none: 'Not saved yet', room: 'No room', off: 'Not chosen', run: 'Saving…', wait: 'Waiting' };
+    var areas = [
+      { key: 'home', name: 'Child home and quizzes', what: "the app, Who's playing?, class quizzes" },
+      { key: 'stories', name: 'Storybooks', what: 'read aloud in English and Urdu' },
+      { key: 'games', name: 'Games', what: "Jugnu's big flight, number and reading games" },
+      { key: 'videos', name: 'Lesson videos', what: '' }
+    ];
+    var videos = d.videos || {}, sizes = d.sizes || {}, want = (d.want || []).map(String), R = d.running;
+    var steps = (d.audit && d.audit.steps) || [];
+    var undone = (d.unfinished || []).map(String);
+    var core3ok = function () { return areas.slice(0, 3).every(function (a) { return a.status === 'ok'; }); };
+    areas.forEach(function (a) {
+      a.note = ''; a.size = '';
+      if (R) {
+        var ids = (R.ids || []).filter(function (id) { return areaOf(id) === a.key; });
+        var got = ids.filter(function (id) { return R.done && R.done[id]; }).length;
+        a.status = ids.length && got === ids.length ? 'ok' : ids.indexOf(R.cur) >= 0 ? 'run' : got ? 'part' : 'wait';
+        if (a.status === 'run') a.note = R.curNote || '';
+        if (a.key === 'videos' && a.status === 'wait') a.note = want.length ? classes(want) + ', saved after everything else' : 'none chosen for this Chromebook';
+        return;
+      }
+      var mine = steps.filter(function (s) { return areaOf(s.step) === a.key; });
+      var total = mine.reduce(function (n, s) { return n + (s.total || 0); }, 0);
+      var missing = mine.reduce(function (n, s) { return n + (s.missing || 0); }, 0);
+      if (a.key !== 'videos') {
+        a.status = !total ? 'none' : missing ? 'missing' : 'ok';
+        if (total) a.size = count(total);
+        if (missing) a.note = missing + ' of ' + total + ' files are not on this Chromebook';
+        if (a.status === 'ok' && undone.some(function (id) { return areaOf(id) === a.key; })) { a.status = 'missing'; a.note = 'Get ready stopped before it finished this'; }
+        return;
+      }
+      if (!want.length) { a.status = 'off'; a.note = 'no class chosen for this Chromebook'; return; }
+      var recs = want.map(function (g) { return { g: g, r: videos[g], s: sizes[g] }; });
+      var whole = recs.filter(function (x) { return x.r && x.r.n > 0 && x.r.saved >= x.r.n; });
+      var noRoom = recs.filter(function (x) { return x.r && x.r.why === 'no room'; });
+      var part = recs.filter(function (x) { return whole.indexOf(x) < 0 && noRoom.indexOf(x) < 0 && x.r && x.r.saved > 0; });
+      var savedMb = recs.reduce(function (n, x) { return n + ((x.r && x.r.mb) || 0); }, 0);
+      var lessons = whole.reduce(function (n, x) { return n + x.r.n; }, 0);
+      var wantMb = recs.reduce(function (n, x) { return n + ((x.s && x.s.mb) || 0); }, 0);
+      if (whole.length === recs.length && !missing && undone.indexOf('x-lesson-videos') < 0) {
+        a.status = 'ok'; a.what = classes(want) + ', ' + lessons + ' lessons'; a.size = big(savedMb);
+        return;
+      }
+      a.status = noRoom.length ? 'room' : whole.length || part.length ? 'missing' : 'none';
+      a.what = classes(want);
+      var bits = [];
+      if (whole.length) bits.push(classes(whole.map(function (x) { return x.g; })) + ' saved');
+      part.forEach(function (x) { bits.push('Class ' + x.g + ': ' + x.r.saved + ' of ' + x.r.n + ' lessons'); });
+      noRoom.forEach(function (x) { bits.push('Class ' + x.g + (x.s && x.s.mb ? ' needs ' + big(x.s.mb) : '') + ', ' + (d.room != null ? 'Chrome allows only ' + big(d.room / 1e6) + ' more here' : 'no room on this Chromebook')); });
+      if (missing && whole.length === recs.length) bits.push(missing + ' video files are not on this Chromebook');
+      if (a.status === 'none') bits.push(core3ok() ? 'not saved on this Chromebook yet' : 'saved after everything else');
+      a.note = bits.join(' · ');
+      a.size = savedMb ? big(savedMb) : wantMb ? 'about ' + big(wantMb) : '';
+    });
+    areas.forEach(function (a) { a.label = LABEL[a.status]; });
+    var core = areas.slice(0, 3), vid = areas[3];
+    var coreOk = core.every(function (a) { return a.status === 'ok'; });
+    var nothing = areas.every(function (a) { return a.status === 'none' || a.status === 'off'; });
+    var unknown = undone.indexOf('?') >= 0; // stopped before it knew its steps: nothing can be called finished
+    var out = { areas: areas };
+    if (R) {
+      out.state = 'running';
+      out.title = 'Getting ready…';
+      out.sub = coreOk ? 'Children can already play the home, storybooks, games and quizzes with the Wi-Fi off. Lesson videos follow, one class at a time.'
+        : 'Keep the Wi-Fi on. You can close this page part-way: it carries on where it stopped.';
+    } else if (!d.audit && d.checking) {
+      out.state = 'checking'; out.title = 'Looking at what is saved on this Chromebook…'; out.sub = ''; out.areas = [];
+    } else if (nothing) {
+      out.state = 'fresh'; out.title = 'Not ready for offline yet';
+      out.sub = 'With the Wi-Fi on, press Get ready once. It saves everything below so children can play with the Wi-Fi off.';
+    } else if (unknown) {
+      out.state = 'partial'; out.title = 'Not ready yet';
+      out.sub = 'Get ready stopped before the end. Press Carry on with the Wi-Fi on: it picks up where it stopped.';
+    } else if (coreOk && (vid.status === 'ok' || vid.status === 'off')) {
+      out.state = 'ready'; out.title = 'Ready to use without Wi-Fi';
+      out.sub = 'Everything below opens on this Chromebook with the Wi-Fi off.' + (d.refreshOpen ? ' The last check for new things stopped part-way: Carry on finishes it.' : '');
+      if (d.refreshOpen) out.action = 'Carry on checking';
+    } else if (coreOk) {
+      out.state = 'partial';
+      out.title = vid.status === 'room' ? 'Ready, except some lesson videos' : vid.status === 'none' ? 'Ready, lesson videos not saved yet' : 'Ready, lesson videos not finished';
+      out.sub = 'Children can play everything else with the Wi-Fi off. Lesson videos that are not saved play while the Wi-Fi is on.' +
+        (vid.status === 'room' ? ' To fit them, untick a class this Chromebook does not need or free some space, then press Carry on.' : vid.status === 'none' ? ' Press Save lesson videos with the Wi-Fi on.' : ' Press Carry on with the Wi-Fi on to finish them.');
+      out.action = vid.status === 'none' ? 'Save lesson videos' : 'Carry on';
+    } else {
+      out.state = 'partial'; out.title = 'Not ready yet';
+      out.sub = core.filter(function (a) { return a.status !== 'ok'; }).map(function (a) { return a.name; }).join(', ') + ' did not finish. Press Carry on with the Wi-Fi on: it picks up where it stopped.';
+    }
+    return out;
+  }
+  var drive = lsJson('cb-drive', null);   // the last audit: {at, steps:[{step, total, missing}]}
+  var lastRoom = null;                    // bytes Chrome still allows this site (status())
+  var busy = false, stopped = false, checking = false, chooseOpen = false;
+  /* A run that stops part-way. The FIRST setup of a Chromebook stopping leaves it not ready (cb-unfinished). A run
+   * pressed on a Chromebook that was ready ("Check for new things", "Start again") only looks for new things: what
+   * was saved before is still on the drive, and the audit says so. Its stop is said, and does not undo "Ready"
+   * (cb-refresh-open). Seen 23 Nov 2026: a check cut short marked Storybooks and Games "Not finished", every file there. */
+  var undoneKey = 'cb-unfinished';
+  function undoneAdd(id) { var u = lsJson(undoneKey, []); if (u.indexOf(id) < 0) ls(undoneKey, JSON.stringify(u.concat([id]))); }
+  function keepAudit(a) {
+    if (!a || !a.steps) return;
+    drive = { at: Date.now(), steps: a.steps.map(function (s) { return { step: s.step, total: s.total, missing: s.missing }; }) };
+    ls('cb-drive', JSON.stringify(drive));
+  }
+  function when(t) {
+    if (!t) return '';
+    var d = new Date(t), now = new Date();
+    var hm = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toDateString() === now.toDateString() ? 'today ' + hm : d.toLocaleDateString([], { day: 'numeric', month: 'short' }) + ' ' + hm;
+  }
+  var ICON = {
+    ok: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    fresh: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 20h14"/></svg>',
+    warn: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16.2v.3"/></svg>',
+    run: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
+  };
+  var MARK = { ok: ICON.ok.replace(/30/g, '20'), missing: ICON.warn.replace(/28/g, '20'), room: ICON.warn.replace(/28/g, '20'), run: ICON.run.replace(/28/g, '20') };
+  function render() {
+    var c = child();
+    var st = driveState({ audit: drive, videos: lsJson('cb-videos', {}), sizes: lsJson('cb-video-sizes', {}), want: videoGrades() || videoDefault(lsJson('cb-video-all', ['1', '2', '3', '4', '5'])),
+      room: lastRoom, checking: checking, unfinished: lsJson('cb-unfinished', []), refreshOpen: lsJson('cb-refresh-open', []).length > 0, readyAt: Number(ls('cb-ready-at')) || null,
+      running: busy ? { ids: steps.map(function (s) { return s.id; }), done: run.done, cur: cur && cur.id, curNote: cur && cur.el ? cur.el.querySelector('small').textContent.replace(/^— /, '') : '' } : null });
+    var s = st.state;
+    var look = s === 'running' || s === 'checking' ? 'run' : s === 'fresh' ? 'fresh' : st.title.indexOf('Ready') === 0 ? 'ok' : 'warn';
+    $('hero-icon').className = 'icon ' + (look === 'fresh' ? 'warn' : look);
+    $('hero-icon').innerHTML = ICON[look];
+    $('hero-title').textContent = st.title;
+    var said = [st.sub];
+    if (s === 'ready' || s === 'partial') {
+      var readyAt = Number(ls('cb-ready-at')) || null;
+      said.push([readyAt ? 'Saved ' + when(readyAt) : '', drive && drive.at ? 'checked ' + when(drive.at) : ''].filter(Boolean).join(' · '));
+    }
+    $('hero-sub').textContent = said.filter(Boolean).join(' ');
+    // looking at the drive happens by itself each time the page opens; this is the same look, asked for
+    var rc = $('recheck'); rc.classList.toggle('hidden', !(s === 'ready' || s === 'partial' || s === 'fresh') || busy);
+    rc.disabled = checking; rc.textContent = checking ? 'Checking what is saved…' : 'Check again';
+    $('areas').innerHTML = st.areas.map(function (a) {
+      return '<li class="' + a.status + '" data-area="' + a.key + '"><span class="mark">' + (MARK[a.status] || '') + '</span>' +
+        '<span><b>' + esc(a.name) + '</b>' + (a.what ? '<span class="what"> · ' + esc(a.what) + '</span>' : '') + (a.note ? '<small>' + esc(a.note) + '</small>' : '') + '</span>' +
+        '<span class="size">' + esc(a.size) + '</span><span class="st">' + esc(a.label) + '</span></li>';
+    }).join('');
+    $('run-box').classList.toggle('hidden', !(busy || stopped));
+    var settled = s === 'ready' || s === 'partial';
+    var vidsWanted = s === 'fresh' || (s === 'partial' && /room|missing|none/.test(st.areas[3].status)) || chooseOpen;
+    $('vids-box').classList.toggle('hidden', busy || !vidsWanted || !$('vids').innerHTML);
+    $('choose').classList.toggle('hidden', !(s === 'ready' && $('vids').innerHTML));
+    $('choose').textContent = chooseOpen ? 'Done choosing' : 'Choose classes';
+    $('tips').classList.toggle('hidden', s !== 'fresh');
+    $('test').classList.toggle('hidden', !settled);
+    // the one thing to do now: play once it is ready, save first when it is not
+    var play = $('play');
+    play.className = (settled ? 'big' : 'soft') + (settled || busy ? '' : ' hidden');
+    play.href = KEY && !c ? '/who' : '/cb/home';
+    play.textContent = c ? 'Play as ' + c.name : KEY ? "Start playing · Who's playing?" : 'Start playing';
+    var r = $('ready');
+    r.className = settled ? 'soft' : 'big';
+    r.textContent = busy ? 'Getting ready…' : s === 'ready' ? st.action || 'Check for new things' : s === 'partial' ? st.action || 'Carry on' : Object.keys(run.done).length ? 'Carry on' : 'Get ready for offline';
+    $('hint').textContent = s === 'fresh' ? 'It takes a while (the lesson videos most of all). You can close this page part-way: it carries on where it stopped.' : '';
+    var t = lsJson('cb-test', null);
+    $('last-test').innerHTML = !t ? 'Not tested on this Chromebook yet.' + (settled ? ' Press <b>Test it with Wi-Fi off</b>: it opens everything saved here, as with the Wi-Fi off.' : '')
+      : esc(when(t.at)) + ': ' + (t.bad ? '<b class="state off">' + t.bad + ' of ' + t.total + ' did not open.</b> Carry on puts them back while the Wi-Fi is on.' : '<b class="state">all ' + t.total + ' opened</b> from this Chromebook alone.');
+  }
+  var renderAt = 0;
+  function renderSoon() { if (renderAt) return; renderAt = setTimeout(function () { renderAt = 0; render(); }, 250); }
+  /** Look at the drive again (the worker's audit); the last answer stays on the page meanwhile. */
+  function recheck() {
+    if (busy || checking || !navigator.serviceWorker || !navigator.serviceWorker.controller) return Promise.resolve(null);
+    checking = true; render();
+    return ask({ type: 'audit' }, 180000).then(function (a) { checking = false; if (a && !busy) keepAudit(a); render(); return a; });
+  }
+
   function drawSteps() {
     $('steps').innerHTML = steps.map(function (s) { return '<li data-step="' + esc(s.id) + '">' + esc(s.name) + ' <small></small></li>'; }).join('');
     steps.forEach(function (s) { s.el = $('steps').querySelector('[data-step="' + s.id + '"]'); var d = run.done[s.id]; if (d) mark(s, 'ok', d.note || ''); });
   }
-  function mark(s, cls, note) { if (!s.el) return; s.el.className = cls; s.el.querySelector('small').textContent = note ? '— ' + note : ''; }
+  function mark(s, cls, note) { if (!s.el) return; s.el.className = cls; s.el.querySelector('small').textContent = note ? '— ' + note : ''; if (busy) renderSoon(); }
   function overall(within) {
     var core = steps.filter(function (s) { return !s.late; });
     var n = core.filter(function (s) { return run.done[s.id]; }).length + (cur && !cur.late ? Math.max(0, Math.min(1, within || 0)) : 0);
@@ -447,7 +750,7 @@
     var all = lsJson('cb-video-all', []); var sizes = lsJson('cb-video-sizes', {}); var saved = lsJson('cb-videos', {});
     if (!all.length) { $('vids').innerHTML = ''; return; }
     var on = videoGrades() || videoDefault(all);
-    $('vids').innerHTML = '<b>Lesson videos to save</b> <small>(saved last, after everything else; untick a class this Chromebook does not need)</small><br>' + all.map(function (g) {
+    $('vids').innerHTML = '<b>Lesson videos to save <small>· saved last, after everything else; untick a class this Chromebook does not need</small></b>' + all.map(function (g) {
       var s = sizes[g]; var d = saved[g];
       return '<label><input type="checkbox" data-vg="' + esc(g) + '"' + (on.indexOf(String(g)) >= 0 ? ' checked' : '') + '> Class ' + esc(g) +
         ' <small>' + esc(videoLine(s, d)) + '</small></label>';
@@ -456,6 +759,7 @@
       b.onchange = function () {
         var picked = [].filter.call($('vids').querySelectorAll('[data-vg]'), function (x) { return x.checked; }).map(function (x) { return x.getAttribute('data-vg'); });
         ls('cb-video-grades', picked.length ? picked.join(',') : 'none');
+        if (typeof renderSoon === 'function') renderSoon(); // a class ticked on a ready Chromebook is a class still to save
       };
     });
   }
@@ -583,7 +887,7 @@
   function context() {
     return { cfg: CFG, hub: CFG.hub, kid: run.ctx.kid || null, games: run.ctx.games || [], key: KEY, log: log, warm: warm, frame: frame, abs: abs, ask: ask, setPct: setPct,
       // added by lane/home (ready/README.md): room on the drive, the classes whose videos to save, small helpers
-      space: space, fits: fits, forget: forget, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); } };
+      space: space, fits: fits, forget: forget, videoGrades: videoGrades, child: child, waitOnline: waitOnline, isFull: function () { return full; }, note: function (k, v) { ls(k, typeof v === 'string' ? v : JSON.stringify(v)); drawVideos(); renderSoon(); } };
   }
   function runStep(s) {
     cur = s; s.files = 0; s.failed = 0; s.gone = 0; s.within = 0; s.label = null; s.expected = false;
@@ -594,6 +898,7 @@
       if (s.failed) throw new Error(s.failed + ' files could not be saved');
       run.done[s.id] = { at: Date.now(), files: s.files, note: typeof note === 'string' ? note : (note && note.note) || (s.files ? s.files + ' files' : '') };
       saveRun(); mark(s, 'ok', run.done[s.id].note); overall(0);
+      ls(undoneKey, JSON.stringify(lsJson(undoneKey, []).filter(function (id) { return id !== s.id; })));
       return true;
     }, function (e) {
       var why = String(e && e.message || e);
@@ -619,7 +924,10 @@
 
   function getReady() {
     $('ready').disabled = true; $('again').classList.add('hidden');
-    full = false;
+    full = false; busy = true; stopped = false; chooseOpen = false;
+    undoneKey = ls('cb-ready-at') && !lsJson('cb-unfinished', []).length ? 'cb-refresh-open' : 'cb-unfinished';
+    if (!lsJson(undoneKey, []).length) ls(undoneKey, '["?"]'); // until the steps are known
+    render();
     run.running = true; run.started = run.started || Date.now(); saveRun();
     $('phase').textContent = 'Installing the offline worker…';
     var t0 = Date.now();
@@ -630,7 +938,7 @@
       return workerSettled(reg, 30000).then(function (how) { if (had && how !== 'same') log(how === 'new' ? 'a newer version of the offline worker was waiting: it is in charge now' : 'a newer version of the offline worker is still coming in; carrying on'); });
     }).then(function () { return navigator.serviceWorker.ready; }).then(function () {
       if (!navigator.serviceWorker.controller) { sessionStorage.setItem('cb-continue', '1'); location.reload(); return Promise.reject('reload'); }
-      protect().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : p === false ? 'not yet (see "Keep what is saved" on this page: install Jugnu or bookmark this page)' : 'this browser does not say')); }, function () {});
+      protect().then(function (p) { log('protected from automatic clean-up: ' + (p ? 'yes' : p === false ? 'not yet (see "Kept safe" on this page: install Jugnu or bookmark this page)' : 'this browser does not say')); }, function () {});
       return waitOnline().then(function () { return fetch('/__cb/manifest', { cache: 'no-store' }); }).then(function (r) { return r.json(); });
     }).then(function (m) {
       // The school's class lists, kept for offline (only with this Chromebook's key).
@@ -651,21 +959,23 @@
     }).then(function (how) {
       log('child home: ' + how);
       steps = BUILT_IN.concat((window.CB_READY || []).map(function (s, i) { return { id: 'x-' + String(s.name || i).toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: s.name || 'step ' + (i + 1), run: s.run, late: !!s.late, resumes: !!s.resumes, check: s.check }; }));
-      drawSteps(); overall(0);
+      ls(undoneKey, JSON.stringify(steps.filter(function (s) { return !run.done[s.id]; }).map(function (s) { return s.id; })));
+      drawSteps(); overall(0); render();
       return seq(steps.filter(function (s) { return !s.late; }));
     }).then(function (bad) {
       // Ready only when the worker confirms every file each step set out to save is on this Chromebook.
       return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 120000).then(function (a) {
+        keepAudit(a);
         var late = steps.filter(function (s) { return s.late; });
         var lateIds = late.map(function (s) { return s.id; });
         var miss = a ? a.steps.filter(function (s) { return s.missing && lateIds.indexOf(s.step) < 0; }) : [];
         var secs = Math.round((Date.now() - t0) / 1000);
-        miss.forEach(function (s) { log('missing: ' + s.missing + ' of ' + s.total + ' files of "' + s.step + '", e.g. ' + short(s.sample[0])); delete run.done[s.step]; });
+        miss.forEach(function (s) { log('missing: ' + s.missing + ' of ' + s.total + ' files of "' + s.step + '", e.g. ' + short(s.sample[0])); delete run.done[s.step]; undoneAdd(s.step); });
         document.querySelectorAll('iframe.warm').forEach(function (f) { f.remove(); });
         showLinks(); showChild();
         if (bad.length || miss.length || !a) {
           saveRun();
-          $('phase').textContent = 'Not ready yet: ' + (bad.concat(miss.map(function (s) { return { name: s.step }; }))).map(function (s) { return s.name; }).join(', ') + ' did not finish. Press Get ready again: it carries on from here.';
+          $('phase').textContent = 'Not ready yet: ' + (bad.concat(miss.map(function (s) { return { name: s.step }; }))).map(function (s) { return s.name; }).join(', ') + ' did not finish. Press Carry on: it picks up from here.';
           log('stopped: not everything was saved (' + secs + ' s)');
           throw 'incomplete';
         }
@@ -676,10 +986,11 @@
         return seq(late).then(function (badLate) {
           // the late steps are held to the same proof: every file they set out to save is on the drive
           return ask({ type: 'audit', steps: (steps || []).map(function (x) { return x.id; }) }, 180000).then(function (a2) {
+            keepAudit(a2);
             late.forEach(function (s) {
               var m = a2 && a2.steps.filter(function (x) { return x.step === s.id && x.missing; })[0];
               if (!m || badLate.indexOf(s) >= 0) return;
-              delete run.done[s.id]; mark(s, 'bad', m.missing + ' of ' + m.total + ' files are not on this Chromebook');
+              delete run.done[s.id]; undoneAdd(s.id); mark(s, 'bad', m.missing + ' of ' + m.total + ' files are not on this Chromebook');
               log('missing: ' + m.missing + ' of ' + m.total + ' files of "' + s.name + '", e.g. ' + short(m.sample[0]));
               badLate.push(s);
             });
@@ -689,16 +1000,18 @@
       });
     }).then(function (badLate) {
       run.running = false; run.complete = !badLate.length; run.finished = Date.now(); saveRun();
+      ls('cb-ready-at', String(run.finished)); busy = false;
+      if (!badLate.length) { ls('cb-unfinished', null); ls('cb-refresh-open', null); }
       protect(); // asked again now that there is something to protect
-      $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (protectedSaid === false ? ' It is not yet protected from clean-up: see "Keep what is saved" below.' : '') + (badLate.length ? ' Not finished: ' + badLate.map(function (s) { return s.name; }).join(', ') + ' (press Get ready again to carry on).' : '');
-      $('ready').disabled = false; $('ready').textContent = badLate.length ? 'Carry on' : 'Get ready again (checks for new things)';
+      $('phase').textContent = 'Ready. Everything below now works on this Chromebook without Wi-Fi.' + (protectedSaid === false ? ' It is not yet protected from clean-up: see "Kept safe".' : '') + (badLate.length ? ' Not finished: ' + badLate.map(function (s) { return s.name; }).join(', ') + ' (press Carry on).' : '');
+      $('ready').disabled = false; render();
       $('again').classList.remove('hidden');
       status();
     }).catch(function (e) {
       if (e === 'reload') return;
-      run.running = false; saveRun();
-      if (e !== 'incomplete') { log('stopped: ' + (e && e.message || e)); $('phase').textContent = 'Stopped: ' + (e && e.message || e) + '. Press Get ready again.'; }
-      $('ready').disabled = false; $('ready').textContent = 'Carry on';
+      run.running = false; saveRun(); busy = false; stopped = true;
+      if (e !== 'incomplete') { log('stopped: ' + (e && e.message || e)); $('phase').textContent = 'Stopped: ' + (e && e.message || e) + '. Press Carry on.'; }
+      $('ready').disabled = false; render();
       $('again').classList.remove('hidden');
       status();
     });
@@ -839,6 +1152,7 @@
           return '<div><b>' + esc(g) + '</b>: ' + (rows.length - b.length) + ' of ' + rows.length + ' fine' + (b.length ? '<ul>' + b.slice(0, 40).map(function (r) { return '<li>' + esc(r.name) + ': ' + esc(r.why || 'did not open') + '</li>'; }).join('') + (b.length > 40 ? '<li>… and ' + (b.length - 40) + ' more</li>' : '') + '</ul>' : '') + '</div>';
         }).join('');
       ls('cb-test', JSON.stringify({ at: Date.now(), total: all.length, bad: bad.length }));
+      render();
       report({ selftest: { device: DEVICE, secs: secs, total: all.length, bad: bad.length, online: navigator.onLine, failed: bad.slice(0, 60).map(function (r) { return r.group + ' / ' + r.name + ': ' + r.why; }) } });
       $('test').disabled = false;
       return { total: all.length, bad: bad };
@@ -876,8 +1190,27 @@
   // home is renewed from the first moment there is a network; and who was just picked on Who's playing? (this page
   // is where a pick lands), so the very next Home is that child's.
   if (KEY) ask({ type: 'home', key: KEY, device: DEVICE, who: (child() && child().student_id) || null, name: (child() && child().name) || '' }, 8000).then(function (h) { if (h && h.hub) ls('cb-hub', h.hub); });
-  if (run.complete) { $('phase').textContent = 'Ready. Everything below works on this Chromebook without Wi-Fi.'; $('ready').textContent = 'Get ready again (checks for new things)'; $('pct').style.width = '100%'; $('again').classList.remove('hidden'); }
-  else if (Object.keys(run.done).length) { $('phase').textContent = 'Get ready was stopped part-way. Press the button: it carries on from where it was.'; $('ready').textContent = 'Carry on'; $('again').classList.remove('hidden'); }
+  if (run.complete) { $('phase').textContent = 'Ready. Everything below works on this Chromebook without Wi-Fi.'; $('pct').style.width = '100%'; $('again').classList.remove('hidden'); }
+  else if (Object.keys(run.done).length) { $('phase').textContent = 'Get ready was stopped part-way. Press Carry on: it picks up from where it was.'; stopped = true; $('again').classList.remove('hidden'); }
+  // When it was last made ready: kept from now on; for a Chromebook made ready before, the run it remembers (even one
+  // older than 12 hours, which the page no longer carries on from).
+  if (!ls('cb-ready-at')) { var was = lsJson(RUN_KEY, null); if (was && was.complete && was.finished) ls('cb-ready-at', String(was.finished)); }
+  if (drive && drive.steps && drive.steps.length) $('again').classList.remove('hidden');
+  (function () { // a check cut short on a Chromebook made ready before cb-refresh-open existed
+    var at = Number(ls('cb-ready-at')) || 0, r = lsJson(RUN_KEY, null), u = lsJson('cb-unfinished', []);
+    if (at && u.length && r && r.at > at && !lsJson('cb-refresh-open', []).length) { ls('cb-refresh-open', JSON.stringify(u)); ls('cb-unfinished', null); }
+  }());
+  $('recheck').onclick = function () { recheck(); };
+  if (lsJson('cb-refresh-open', []).length) stopped = false; // a check cut short is said under the title, not as a stopped setup
+  $('choose').onclick = function () { chooseOpen = !chooseOpen; render(); };
+  render();
+  // What is on the drive is looked at again every time this page opens (the last answer shows meanwhile), except
+  // when a child was just picked and it was looked at in the last six hours: then the page is only a way through.
+  var resuming = !!sessionStorage.getItem('cb-continue') || (run.running && navigator.onLine && !Q.get('stay'));
+  if (!resuming && !(Q.get('picked') && drive && Date.now() - drive.at < 6 * 3600e3)) {
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) recheck();
+    else if (!drive) { checking = false; render(); }
+  }
   // The page was reloaded to put the worker in charge, or the Chromebook was closed while Get ready was running: carry on.
   if (sessionStorage.getItem('cb-continue')) { sessionStorage.removeItem('cb-continue'); getReady(); }
   else if (run.running && navigator.onLine && !Q.get('stay')) { log('Get ready was interrupted; carrying on.'); getReady(); }

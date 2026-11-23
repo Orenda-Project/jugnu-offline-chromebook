@@ -150,13 +150,19 @@ function slice(full, range) {
   });
 }
 
-function media(req, key) {
+function media(req, key, clientId, ev) {
   var range = req.headers.get('Range');
   return videoKept(req.url, key).then(function (hit) { // VIDEOS (lane/home): the readable copy Get ready saved, first
     if (hit) return range && hit.type !== 'opaque' ? slice(hit, range) : hit;
-    // VIDEOS: a lesson video not saved yet plays from the network as asked (Get ready saves videos; playing one does
-    // not start a second whole download). A small clip of the media store is saved readable, in the background.
-    if (videoIs(req.url)) return fetch(req).catch(function () { return offlineAnswer(req); });
+    // VIDEOS: a lesson video not saved yet plays from the network as asked, at once, and is saved whole in the
+    // background while it plays (SAVED WHILE IT PLAYS). A small clip of the media store is saved readable, in the background.
+    if (videoIs(req.url)) {
+      if (videoStore(req.url) && !savedOnly() && !(self.navigator && self.navigator.onLine === false)) {
+        var saving = playFor(req.url, clientId); // the worker is kept alive until the save is done
+        if (ev && saving) try { ev.waitUntil(saving.catch(function () {})); } catch (err) { /* the event has ended */ }
+      }
+      return fetch(req).catch(function () { return offlineAnswer(req); });
+    }
     if (videoStore(req.url)) { videoSave(req.url); return fetch(req).catch(function () { return offlineAnswer(req); }); }
     // Not kept yet: play from the network as asked, and keep the whole file for next time.
     var whole = new Request(req.url, { mode: req.mode === 'no-cors' ? 'no-cors' : 'cors', credentials: 'same-origin' });
@@ -684,7 +690,10 @@ function watchStart(req) {
     if (savedOnly()) return watchNoNet(req, body, json({ ok: false, offline: true, selftest: true }, 503));
     return fetch(req.clone()).then(function (res) {
       if (res.status >= 500) return watchNoNet(req, body, res);
-      if (res.ok && /json/.test(res.headers.get('Content-Type') || '')) { var copy = res.clone(); bodyKey(req).then(function (key) { keep(key, copy); }); }
+      if (res.ok && /json/.test(res.headers.get('Content-Type') || '')) {
+        var copy = res.clone(); bodyKey(req).then(function (key) { keep(key, copy); });
+        res.clone().json().then(function (j) { playStarted(body, j); }, function () {}); // SAVED WHILE IT PLAYS
+      }
       return res;
     }, function () { return watchNoNet(req, body, null); });
   });
@@ -721,6 +730,185 @@ function videoSize(url) {
       });
     });
   }).catch(function () { return none; });
+}
+/* SAVED WHILE IT PLAYS (lane/home, 23 Nov 2026). Get ready saves the lesson videos of the ticked classes (1 to 5 by
+ * default). A lesson of any other class (Nursery, KG, 6, a class that was unticked or did not fit) used to play from
+ * the internet and nothing more, so a child picked online whose class was not saved found, with the Wi-Fi gone, a
+ * door full of lessons that could not play. Now a lesson that is not on the drive streams at once, as before, and
+ * the whole video is saved in the background through this site (videoSave: kept only when it arrived whole; a
+ * lesson is downloaded twice, once to stream and once to keep, so the child never waits). When it is whole, the
+ * lesson gets a record (/__cb/watch/<vid>, the same as Get ready's), and plays with no network from then on.
+ *   Which lesson a video is: a start answered {watch} names it; a lesson page (/q/<code>?k=…) is the lesson the
+ *   door's list or the start answer named for that page (libLearn, playStarted).
+ *   A save cut short (the Wi-Fi went, the page closed) is kept on a list (WANTED) and tried again when a page says
+ *   the network is back, while its signed link still works (PLAY_KEEP_MS); after that the lesson is saved the next
+ *   time it is played.
+ *   With no network a list of lessons names only the lessons that will play (a record on the drive), and the page is
+ *   told how many of the list's lessons that is (boot.js: the class note, with the classes that are saved).
+ *   During "Check this Chromebook" the lists are left whole, so the check still names a saved lesson gone missing. */
+var PLAY_KEEP_MS = 5 * 3600e3; // a signed link lasts 6 hours
+var PLAY_TRIES = 3;
+var playing = {};                       // video key -> its save at work (one at a time per video)
+var playRecs = {};                      // video key -> the lesson record to write when the video is whole
+var libIndex = { byVid: {}, byPage: {}, own: null }; // from the door's lists: a lesson's name, picture and class
+var WANTED_KEY = new URL('/__cb/played-wanted', self.location.origin).toString();
+var PLAYED_KEY = new URL('/__cb/played-index', self.location.origin).toString();
+/** Which of these lessons have a record on the drive. Looked up by its exact address: kept()'s looser searches read
+ *  the whole cache on a miss (most lessons, offline), which made a class's list take 9 s to open. */
+function recsHave(vids) {
+  return caches.open(KEEP).then(function (c) { return Promise.all(vids.map(function (vid) { return c.match(watchKey(vid)).then(Boolean, function () { return false; }); })); }, function () { return vids.map(function () { return false; }); });
+}
+function lasting(u) { return u && /^https?:/.test(u) ? u.split('?')[0] : u || null; } // (a signed link runs out in hours)
+function readJson(key, dflt) { return caches.open(KEEP).then(function (c) { return c.match(key); }).then(function (r) { return r ? r.json() : dflt; }).catch(function () { return dflt; }); }
+function writeJson(key, v) { return caches.open(KEEP).then(function (c) { return c.put(key, new Response(JSON.stringify(v), { headers: { 'Content-Type': 'application/json' } })); }).catch(function () {}); }
+/** A list the door was given: remember each lesson's name, picture and class, and which lesson each page is. */
+function libLearn(url, j) {
+  try {
+    var q = new URL(url).searchParams;
+    if (!q.get('g') && !q.get('s') && j && j.grade != null) libIndex.own = String(j.grade); // the home child's own class
+    var g = q.get('g') || libIndex.own;
+    ((j && j.chapters) || []).forEach(function (c) {
+      (c.videos || []).forEach(function (v) {
+        if (!v || !v.vid) return;
+        libIndex.byVid[v.vid] = { title: v.title || '', poster: v.poster || v.thumb || c.art || null, secs: v.secs || 0, g: g || null };
+        if (v.code && v.k) libIndex.byPage[v.code + '|' + v.k] = v.vid;
+      });
+    });
+  } catch (e) { /* a list it cannot read: nothing learnt */ }
+}
+function playRec(vid, url, w) {
+  var i = libIndex.byVid[vid] || {}; w = w || {};
+  var rec = { vid: vid, url: lasting(url), poster: lasting(w.poster || i.poster), secs: w.secs || i.secs || 0, title: w.title || i.title || '', lang: w.lang || 'en', after: false, played: 1 };
+  if (w.title_ur) rec.title_ur = w.title_ur;
+  if (i.g) rec.g = i.g;
+  return rec;
+}
+/** A start was answered: a video alone is saved from now; a lesson page is matched to its lesson when it plays. */
+function playStarted(body, j) {
+  if (!j || !body || typeof body.vid !== 'string' || body.after) return;
+  if (j.watch && typeof j.watch.url === 'string' && videoStore(j.watch.url)) playSave(j.watch.url, playRec(body.vid, j.watch.url, j.watch));
+  else if (j.code && j.k) libIndex.byPage[j.code + '|' + j.k] = body.vid;
+}
+/** A lesson video asked for by a player while it is not on the drive: which lesson it is, from the page playing it. */
+function playFor(url, clientId) {
+  var key; try { key = videoKeyOf(url); } catch (e) { return null; }
+  if (playing[key]) return playing[key];
+  if (playRecs[key] || !clientId || !self.clients || !self.clients.get) return playSave(url, playRecs[key] || null);
+  return self.clients.get(clientId).then(function (cl) {
+    var vid = null;
+    try {
+      var p = new URL(cl.url);
+      var m = /^\/q\/([^/]+)/.exec(p.pathname);
+      if (m) vid = libIndex.byPage[decodeURIComponent(m[1]) + '|' + (p.searchParams.get('k') || '')] || null;
+    } catch (e) { vid = null; }
+    return playSave(url, vid ? playRec(vid, url, null) : null);
+  }, function () { return playSave(url, null); });
+}
+/** Save a lesson video whole while it plays, then its record. Resolves {ok, had|bytes} or {ok:false, why}. */
+function playSave(url, rec) {
+  var key; try { key = videoKeyOf(url); } catch (e) { return Promise.resolve({ ok: false, why: 'bad_url' }); }
+  if (rec) playRecs[key] = rec;
+  if (playing[key]) return playing[key];
+  var done = function (r) {
+    delete playing[key];
+    var lesson = playRecs[key];
+    if (r && r.ok) {
+      return wantedDrop(key).then(function () {
+        if (!lesson) return r; // the video is kept (a lesson page plays it); no lesson was named, so no record
+        return watchKeep([lesson]).then(function () { return playedAdd(lesson); }).then(function () { delete playRecs[key]; return r; });
+      });
+    }
+    // gone from the server: nothing to try again; else it waits on the list
+    if (r && (r.why === 'http_404' || r.why === 'http_410')) return wantedDrop(key).then(function () { return r; });
+    return wantedAdd(key, url, lesson, r && r.why).then(function () { return r; });
+  };
+  playing[key] = videoSave(url).then(done, function () { return done({ ok: false, why: 'failed' }); });
+  return playing[key];
+}
+function playedAdd(rec) {
+  return readJson(PLAYED_KEY, {}).then(function (ix) { ix[rec.vid] = { g: rec.g || null, at: Date.now() }; return writeJson(PLAYED_KEY, ix); });
+}
+function wantedAdd(key, url, rec, why) {
+  return readJson(WANTED_KEY, []).then(function (l) {
+    var had = l.filter(function (w) { return w.key === key; })[0];
+    if (had) { had.tries = (had.tries || 1) + 1; had.why = why || had.why; had.url = url; if (rec) had.rec = rec; }
+    else l.push({ key: key, url: url, rec: rec || null, at: Date.now(), tries: 1, why: why || 'failed' });
+    return writeJson(WANTED_KEY, l);
+  });
+}
+function wantedDrop(key) {
+  return readJson(WANTED_KEY, []).then(function (l) {
+    var left = l.filter(function (w) { return w.key !== key; });
+    return left.length === l.length ? null : writeJson(WANTED_KEY, left);
+  });
+}
+/** The network is back (a page says so): the saves that were cut short, again, while their links still work. */
+function wantedRetry() {
+  return readJson(WANTED_KEY, []).then(function (l) {
+    var now = Date.now();
+    var live = l.filter(function (w) { return now - w.at < PLAY_KEEP_MS && (w.tries || 1) < PLAY_TRIES + 1; });
+    return (live.length === l.length ? Promise.resolve() : writeJson(WANTED_KEY, live)).then(function () {
+      return live.reduce(function (p, w) { return p.then(function () { return playing[w.key] ? null : playSave(w.url, w.rec); }); }, Promise.resolve());
+    }).then(function () { return live.length; });
+  });
+}
+/** For a page: the lessons saved while they played, by class, and the saves still waiting. */
+function playStatus() {
+  return Promise.all([readJson(PLAYED_KEY, {}), readJson(WANTED_KEY, [])]).then(function (r) {
+    var byClass = {};
+    Object.keys(r[0]).forEach(function (vid) { var g = r[0][vid].g || '?'; byClass[g] = (byClass[g] || 0) + 1; });
+    var now = Date.now();
+    return { played: byClass, wanted: r[1].filter(function (w) { return now - w.at < PLAY_KEEP_MS; }).map(function (w) { return { vid: w.rec && w.rec.vid, title: w.rec && w.rec.title, g: w.rec && w.rec.g, why: w.why, at: w.at, saving: !!playing[w.key] }; }) };
+  });
+}
+/** With no network (not the self-test): a list of lessons names only those that will play, and its page is told. */
+function videoListPlayable(res, url, clientId) {
+  var noNet = (self.navigator && self.navigator.onLine === false) || netLast === 'down';
+  if (!res || !res.ok) return Promise.resolve(res);
+  if (!noNet || savedOnly()) {
+    if (!noNet) res.clone().json().then(function (j) { libLearn(url, j); }, function () {});
+    return Promise.resolve(res);
+  }
+  var tell = function (msg) {
+    if (!clientId || !self.clients || !self.clients.get) return;
+    self.clients.get(clientId).then(function (cl) { if (cl) cl.postMessage(msg); }, function () {});
+  };
+  return res.clone().json().then(function (j) {
+    if (j && Array.isArray(j.subjects)) return subjectsPlayable(res, url, j, tell);
+    var rows = [];
+    ((j && j.chapters) || []).forEach(function (c) { (c.videos || []).forEach(function (v) { if (v && v.vid) rows.push(v); }); });
+    if (!rows.length) return res;
+    return recsHave(rows.map(function (v) { return v.vid; })).then(function (have) { rows.forEach(function (v, i) { v.cbPlays = have[i]; }); }).then(function () {
+      var playable = rows.filter(function (v) { return v.cbPlays; }).length;
+      j.chapters = j.chapters.map(function (c) { c.videos = (c.videos || []).filter(function (v) { var ok = v.cbPlays; delete v.cbPlays; return ok; }); return c; })
+        .filter(function (c) { return c.videos.length; });
+      var q = new URL(url).searchParams;
+      tell({ type: 'cb-lib-offline', g: q.get('g') || libIndex.own || null, s: q.get('s') || null, kept: playable, total: rows.length });
+      return new Response(JSON.stringify(j), { status: 200, headers: { 'Content-Type': 'application/json', 'X-CB-Local': '1' } });
+    });
+  }).catch(function () { return res; });
+}
+/** A class's list of subjects, with no network: a subject none of whose lessons plays is left out (Jugnu draws an
+ *  empty subject as grey tiles that never fill), and the page is told the whole class's count at once. */
+function subjectsPlayable(res, url, j, tell) {
+  var playable = 0, total = 0;
+  return Promise.all(j.subjects.map(function (sub) {
+    var key = sub && (sub.key || sub.s);
+    if (!key) return Promise.resolve(false);
+    return kept(url + '&s=' + encodeURIComponent(key)).then(function (hit) { return hit ? hit.json() : null; }).then(function (lj) {
+      var rows = [];
+      ((lj && lj.chapters) || []).forEach(function (c) { (c.videos || []).forEach(function (v) { if (v && v.vid) rows.push(v.vid); }); });
+      total += rows.length;
+      return recsHave(rows).then(function (ok) {
+        var n = ok.filter(Boolean).length; playable += n; return n > 0;
+      });
+    }).catch(function () { return false; });
+  })).then(function (keep) {
+    j.subjects = j.subjects.filter(function (sub, i) { return keep[i]; });
+    var q = new URL(url).searchParams;
+    tell({ type: 'cb-lib-offline', g: q.get('g') || (j.grade != null ? String(j.grade) : libIndex.own) || null, s: '*', kept: playable, total: total });
+    return new Response(JSON.stringify(j), { status: 200, headers: { 'Content-Type': 'application/json', 'X-CB-Local': '1' } });
+  }).catch(function () { return res; });
 }
 /* ==== end VIDEOS ================================================================================================ */
 
@@ -833,6 +1021,9 @@ function readyMessage(d, port, e) {
     return true;
   }
   // a record per saved lesson (VIDEOS: a lesson as a video alone)
+  // SAVED WHILE IT PLAYS: a page says the network is back (the saves cut short go again); a page asks what is saved
+  if (d.type === 'played-retry') { e.waitUntil(wantedRetry().then(reply, function () { reply(null); })); return true; }
+  if (d.type === 'played-status') { e.waitUntil(playStatus().then(reply, function () { reply(null); })); return true; }
   if (d.type === 'watch-keep' && Array.isArray(d.recs)) {
     e.waitUntil(watchKeep(d.recs).then(reply, function () { reply(null); }));
     return true;
@@ -1761,11 +1952,12 @@ self.addEventListener('fetch', function (e) {
   if (req.method === 'POST' && u.origin === self.location.origin) { e.respondWith(homePost(req)); return; }
   if (req.method !== 'GET') { if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } return; } // READY: self-test
   // (VIDEOS: a saved list of lessons, given out with no network, names only the lesson pages on the drive: videoListFit)
-  if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(LIB_RX.test(u.pathname) ? homeGet(req, u).then(videoListFit) : homeGet(req, u)); return; }
+  var plays = function (res) { return videoListPlayable(res, req.url, e.clientId); }; // VIDEOS: only what plays, with no network
+  if (u.origin === self.location.origin && homeNames(u)) { e.respondWith(LIB_RX.test(u.pathname) ? homeGet(req, u).then(videoListFit).then(plays) : homeGet(req, u)); return; }
   var key = keyFor(req);
-  if (u.origin === self.location.origin && LIB_RX.test(u.pathname)) { e.respondWith(networkFirst(req, key).then(videoListFit)); return; }
+  if (u.origin === self.location.origin && LIB_RX.test(u.pathname)) { e.respondWith(networkFirst(req, key).then(videoListFit).then(plays)); return; }
   // (VIDEOS: a picture of the media store too, a lesson's poster: it is kept in the media cache, which media() looks in)
-  if (MEDIA_RX.test(u.pathname) || videoStore(req.url)) { e.respondWith(media(req, key)); return; }
+  if (MEDIA_RX.test(u.pathname) || videoStore(req.url)) { e.respondWith(media(req, key, e.clientId, e)); return; }
   if (u.origin !== self.location.origin && req.destination !== 'image' && req.destination !== 'font' && req.destination !== 'style' && req.destination !== 'script') {
     if (savedOnly()) { miss(req, 'other_site'); e.respondWith(Response.error()); } // READY (lane/home): the self-test reaches no network
     return;
